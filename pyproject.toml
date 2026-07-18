@@ -1,0 +1,18 @@
+[project]
+name = "release-bot"
+version = "0.8.4"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic~=1.18.4",
+    "flask-apscheduler~=1.13.1",
+    "flask-migrate~=4.1.0",
+    "flask-sqlalchemy~=3.1.1",
+    "flask[async]~=3.1.3",
+    "pygithub~=2.9.0",
+    "python-telegram-bot~=22.7",
+    "requirements-parser~=0.11.0",
+    "sqlalchemy~=2.0.48",
+    "sulguk~=0.11.0",
+    "telegramify-markdown==1.1.3",
+    "urllib3~=2.6.3",
+]
