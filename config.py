@@ -1,20 +1,44 @@
 import os
 
+from pydantic import Field, computed_field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 
 
-class Config:
-    TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
-    GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN')
-    SITE_URL = os.environ.get('SITE_URL')
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URI', f'sqlite:///{basedir}/data/db.sqlite')
-    SQLALCHEMY_ECHO = os.environ.get('SQL_DEBUG', '').lower() in ('true', '1', 't')
-    LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').upper()
-    MAX_REPOS_PER_CHAT = int(os.environ.get('MAX_REPOS_PER_CHAT', 0))
-    PROCESS_PRE_RELEASES = bool(GITHUB_TOKEN)
-    GITHUB_POLL_INTERVAL = int(os.environ.get('GITHUB_POLL_INTERVAL', 60))
-    CHAT_ID = []
-    if 'CHAT_ID' in os.environ:
-        for chat_id in os.environ.get('CHAT_ID').split(','):
-            CHAT_ID.append(int(chat_id))
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",
+    )
+
+    TELEGRAM_BOT_TOKEN: str | None = None
+    GITHUB_TOKEN: str | None = None
+    SITE_URL: str | None = None
+    SQLALCHEMY_DATABASE_URI: str = Field(default=f"sqlite:///{basedir}/data/db.sqlite", alias="DATABASE_URI")
+    SQLALCHEMY_ECHO: bool = Field(alias="SQL_DEBUG", default=False)
+    LOG_LEVEL: str = "INFO"
+
+    @field_validator("LOG_LEVEL", mode="before")
+    @classmethod
+    def normalize_log_level(cls, value: str) -> str:
+        return value.upper()
+
+    MAX_REPOS_PER_CHAT: int = 0
+    GITHUB_POLL_INTERVAL: int = 60
+    CHAT_ID: list[int] = Field(default_factory=list)
+
+    @field_validator("CHAT_ID", mode="before")
+    @classmethod
+    def split_chat_ids(cls, value):
+        if isinstance(value, str):
+            return [int(x.strip()) for x in value.split(",")]
+        return value
+
+    @computed_field
+    @property
+    def PROCESS_PRE_RELEASES(self) -> bool:
+        return bool(self.GITHUB_TOKEN)
+
+
+settings = Settings()

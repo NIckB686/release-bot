@@ -4,18 +4,18 @@ from flask import Flask
 from flask_apscheduler import APScheduler
 from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
-from github import Github, Auth
+from github import Auth, Github
 
-from config import Config
+from config import settings
 
 db = SQLAlchemy()
 migrate = Migrate()
 scheduler = APScheduler()
 
 
-def create_app(config_class=Config):
+def create_app():
     app = Flask(__name__)
-    app.config.from_object(config_class)
+    app.config.update(settings.model_dump())
     app.logger.setLevel(app.config['LOG_LEVEL'])
 
     db.init_app(app)
@@ -47,6 +47,5 @@ else:
     app.logger.fatal('Telegram bot token not specified')
 
 scheduler.start()
-
 
 from app import database, models, routes, tasks  # noqa: E402
