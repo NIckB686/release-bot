@@ -1,51 +1,61 @@
 import asyncio
+import logging
 
+from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask
-from flask_apscheduler import APScheduler
-from flask_migrate import Migrate
-from flask_sqlalchemy import SQLAlchemy
-from github import Auth, Github
 
+from app.github_obj import github_obj
+from app.tasks import clear_db, poll_github, poll_github_user
 from config import settings
 
-db = SQLAlchemy()
-migrate = Migrate()
-scheduler = APScheduler()
+logger = logging.getLogger(__name__)
 
 
 def create_app():
     app = Flask(__name__)
     app.config.update(settings.model_dump())
-    app.logger.setLevel(app.config['LOG_LEVEL'])
-
-    db.init_app(app)
-    migrate.init_app(app, db)
-
-    scheduler.init_app(app)
+    app.logger.setLevel(settings.LOG_LEVEL)
 
     return app
 
 
 app = create_app()
 
-if app.config['GITHUB_TOKEN']:
-    auth = Auth.Token(app.config['GITHUB_TOKEN'])
-else:
-    auth = None
-github_obj = Github(auth=auth)
-
-if app.config['TELEGRAM_BOT_TOKEN']:
+if settings.TELEGRAM_BOT_TOKEN:
     from app.telegram_bot import TelegramBot
 
-    telegram_bot = TelegramBot(app)
+    telegram_bot = TelegramBot(settings, github_obj)
     if not asyncio.run(telegram_bot.test_token()):
-        app.logger.fatal('Telegram bot token is invalid or server not available')
-        exit()
+        raise RuntimeError('Telegram bot token is invalid or server not available')
     telegram_bot.start()
 else:
     telegram_bot = None
-    app.logger.fatal('Telegram bot token not specified')
+    logger.critical('Telegram bot token not specified')
 
+scheduler = BackgroundScheduler()
+scheduler.add_job(
+    poll_github,
+    trigger="interval",
+    id="poll_github",
+    minutes=settings.GITHUB_POLL_INTERVAL,
+    replace_existing=True,
+)
+scheduler.add_job(
+    poll_github_user,
+    trigger="cron",
+    id="poll_github_user",
+    hour="*/8",
+    replace_existing=True,
+)
+
+scheduler.add_job(
+    clear_db,
+    trigger="cron",
+    id="clear_db",
+    week="*",
+    replace_existing=True,
+)
 scheduler.start()
 
-from app import database, models, routes, tasks  # noqa: E402
+from app import database, routes  # noqa: E402
+from app.database import models

@@ -12,8 +12,6 @@ from alembic import op
 import sqlalchemy as sa
 from github import Github, Auth
 
-from app.models import Release
-
 # revision identifiers, used by Alembic.
 revision = '85799c6918a0'
 down_revision = '1bc708e3cc39'

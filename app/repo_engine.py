@@ -1,5 +1,5 @@
 import re
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 import github
 from sulguk import transform_html
@@ -8,9 +8,11 @@ from telegram._utils.defaultvalue import DEFAULT_NONE
 from telegram.constants import MessageLimit, ParseMode
 from telegramify_markdown import markdownify
 
-from app import app, github_obj
+from app.database.models import Repo
+from app.database.models.release import Release
 from app.github_emoji import github_emoji_map
-from app.models import Release, Repo
+from app.github_obj import github_obj
+from config import settings
 
 SKIPPED_POSTFIX = "\n-=SKIPPED=-"
 
@@ -112,11 +114,11 @@ def codeify_release_message(release_note_format, repo, release):
         release_body = ""
     release_body = github_extra_html_tags_pattern.sub(
         "",
-        release_body
+        release_body,
     )
     release_body = github_img_html_tag_pattern.sub(
         "🖼️\\1",
-        release_body
+        release_body,
     )
     if len(release_body) > MessageLimit.MAX_TEXT_LENGTH - 256:
         release_body = f"{release_body[:MessageLimit.MAX_TEXT_LENGTH - 256]}{SKIPPED_POSTFIX}"
@@ -138,26 +140,26 @@ def markdownify_release_message(release_note_format, repo, release):
         release_body = ""
     release_body = github_extra_html_tags_pattern.sub(
         "",
-        release_body
+        release_body,
     )
     release_body = github_img_html_tag_pattern.sub(
         "🖼️\\1",
-        release_body
+        release_body,
     )
     if len(release_body) > MessageLimit.MAX_TEXT_LENGTH - 256:
         release_body = f"{release_body[:MessageLimit.MAX_TEXT_LENGTH - 256]}{SKIPPED_POSTFIX}"
 
     release_body = github_b_html_tag_pattern.sub(
-        "**\\1**", release_body
+        "**\\1**", release_body,
     )
     release_body = github_i_html_tag_pattern.sub(
-        "_\\1_", release_body
+        "_\\1_", release_body,
     )
     release_body = github_code_html_tag_pattern.sub(
-        "`\\1`", release_body
+        "`\\1`", release_body,
     )
     release_body = github_a_html_tag_pattern.sub(
-        "[\\2](\\1)", release_body
+        "[\\2](\\1)", release_body,
     )
     release_body = release_body.replace("<hr>", "---")
     release_body = release_body.replace("[!NOTE]", "**ⓘ Note**")
@@ -199,7 +201,7 @@ def store_latest_release(session, repo, repo_obj):
     prerelease = None
     tag = None
 
-    if app.config['PROCESS_PRE_RELEASES']:
+    if settings.PROCESS_PRE_RELEASES:
         releases = repo.get_releases()
         try:
             prerelease = releases[0]

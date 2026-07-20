@@ -3,10 +3,10 @@ name = "release-bot"
 version = "0.8.4"
 requires-python = "~=3.12.0"
 dependencies = [
+    "aiogram~=3.30.0",
     "alembic~=1.18.4",
-    "flask-apscheduler~=1.13.1",
-    "flask-migrate~=4.1.0",
-    "flask-sqlalchemy~=3.1.1",
+    "apscheduler~=3.11.3",
+    "fastapi[standard-no-fastapi-cloud-cli]~=0.139.2",
     "flask[async]~=3.1.3",
     "pydantic-settings~=2.14.2",
     "pygithub~=2.9.0",

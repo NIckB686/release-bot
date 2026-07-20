@@ -4,14 +4,17 @@ import logging
 import re
 import threading
 import urllib.parse
+from functools import wraps
 
 import github
 import requirements
 import telegram
 import urllib3
+from github import Github
 from sqlalchemy import true
+from sqlalchemy.orm import Session
 from telegram import Chat as TelegramChat
-from telegram import Update, LinkPreviewOptions, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, Update
 from telegram.constants import InlineKeyboardMarkupLimit, ParseMode
 from telegram.ext import (
     Application,
@@ -22,10 +25,14 @@ from telegram.ext import (
     filters,
 )
 
-from app import github_obj, db
 from app._version import __version__
-from app.models import Chat, Repo, ChatRepo, Release
-from app.repo_engine import store_latest_release, format_release_message, htmlify_release_body
+from app.database.models import Repo
+from app.database.models.chat import Chat
+from app.database.models.chat_repo import ChatRepo
+from app.database.models.release import Release
+from app.database.session import SessionLocal
+from app.repo_engine import format_release_message, store_latest_release
+from config import Settings
 
 MAX_UPLOADED_FILE_SIZE = 1024 * 10  # 10kB
 
@@ -35,7 +42,23 @@ pypi_link_pattern = re.compile("https://pypi.org/project/(.+)/")
 npm_link_pattern = re.compile("https://www.npmjs.com/package/(.+)")
 
 
-def get_or_create_chat(session, chat_id):
+def with_session(func):
+    @wraps(func)
+    async def wrapper(self, update, context, *args, **kwargs):
+        with SessionLocal() as session:
+            return await func(
+                self,
+                update,
+                context,
+                session=session,
+                *args,
+                **kwargs,
+            )
+
+    return wrapper
+
+
+def get_or_create_chat(session:Session, chat_id: int):
     chat = session.get(Chat, chat_id)
     if not chat:
         chat = Chat(
@@ -67,19 +90,15 @@ def get_latest_chat_release(session, chat, repo):
 
 class TelegramBot(object):
 
-    def __init__(self, app=None):
-        self.application = None
-        self.app = None
+    def __init__(self, settings: Settings, github: Github):
+        self.settings = settings
+        self.github = github
+        self.init_app()
 
-        if app:
-            self.init_app(app)
+    def init_app(self):
+        logging.getLogger().setLevel(self.settings.LOG_LEVEL)
 
-    def init_app(self, app):
-        logging.getLogger().setLevel(app.config['LOG_LEVEL'])
-
-        self.app = app
-
-        self.application = Application.builder().token(self.app.config['TELEGRAM_BOT_TOKEN']).build()
+        self.application = Application.builder().token(self.settings.TELEGRAM_BOT_TOKEN).build()
 
         self.application.add_handler(CommandHandler("about", self.about_command))
         self.application.add_handler(CommandHandler("delete", self.delete_command))
@@ -99,10 +118,10 @@ class TelegramBot(object):
 
     def _get_chat_id(self, update: Update):
         chat_id = update.effective_chat.id
-        if not self.app.config['CHAT_ID']:
+        if not self.settings.CHAT_ID:
             return chat_id
         else:
-            if chat_id in self.app.config['CHAT_ID']:
+            if chat_id in self.settings.CHAT_ID:
                 return chat_id
         return None
 
@@ -126,7 +145,7 @@ class TelegramBot(object):
         if self._get_chat_id(update):
             await update.message.reply_text(
                 "Send a message containing repo for subscribing in one of the following formats: "
-                "owner/repo, https://github.com/owner/repo"
+                "owner/repo, https://github.com/owner/repo",
             )
 
     async def about_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -134,7 +153,7 @@ class TelegramBot(object):
         if self._get_chat_id(update):
             await update.message.reply_text(
                 f"release-bot - a telegram bot for GitHub releases v{__version__}\n"
-                "Source code available at https://github.com/JanisV/release-bot"
+                "Source code available at https://github.com/JanisV/release-bot",
             )
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -156,264 +175,265 @@ class TelegramBot(object):
                 "/starred username - subscribe to user's starred repos\n"
                 "/starred - unsubscribe from user's starred repos\n"
                 "/settings - change output format\n"
-                "/stats - basic server statistics"
+                "/stats - basic server statistics",
             )
 
-    async def list_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    @with_session
+    async def list_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE, session: Session) -> None:
         """Send a message when the command /list is issued."""
         if chat_id := self._get_chat_id(update):
-            with self.app.app_context():
-                text = "Your subscriptions:\n"
-                chat = get_or_create_chat(db.session, chat_id)
-                for i, repo_obj in enumerate(chat.repos):
-                    repo_emoji = ''
-                    if repo_obj.archived:
-                        repo_emoji += ' 📦'
-                    if repo_obj.blocked:
-                        repo_emoji += ' 🚫'
+            text = "Your subscriptions:\n"
+            chat = get_or_create_chat(session, chat_id)
+            for i, repo_obj in enumerate(chat.repos):
+                repo_emoji = ''
+                if repo_obj.archived:
+                    repo_emoji += ' 📦'
+                if repo_obj.blocked:
+                    repo_emoji += ' 🚫'
 
-                    chat_repo = db.session.query(ChatRepo) \
-                        .filter(ChatRepo.chat_id == chat.id).filter(ChatRepo.repo_id == repo_obj.id) \
-                        .first()
-                    if chat_repo.starred:
-                        repo_emoji += ' ⭐'
+                chat_repo = session.query(ChatRepo) \
+                    .filter(ChatRepo.chat_id == chat.id).filter(ChatRepo.repo_id == repo_obj.id) \
+                    .first()
+                if chat_repo.starred:
+                    repo_emoji += ' ⭐'
 
-                    text += f"{i + 1}. <b><a href='{repo_obj.link}'>{repo_obj.full_name}</a></b>{repo_emoji}\n"
+                text += f"{i + 1}. <b><a href='{repo_obj.link}'>{repo_obj.full_name}</a></b>{repo_emoji}\n"
 
             await update.message.reply_html(
                 text,
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
 
-    async def prerelease_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    @with_session
+    async def prerelease_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE, session: Session) -> None:
         """Process the command /prerelease."""
         if self._get_chat_id(update):
             if chat_id := self._get_chat_id(update):
-                with self.app.app_context():
-                    if update.message.reply_to_message:
-                        repo_url = update.message.reply_to_message.link_preview_options.url
-                        repo_obj = db.session.query(Repo) \
-                            .filter(Repo.link == repo_url) \
-                            .first()
-                    else:
-                        if not context.args or len(context.args) != 1 or not direct_pattern.search(context.args[0]):
-                            await update.message.reply_text(
-                                "Specify a GitHub repo in the following format: /prerelease owner/repo")
-                            return
-
-                        repo_name = context.args[0]
-                        repo_obj = db.session.query(Repo) \
-                            .filter(Repo.full_name == repo_name) \
-                            .first()
-
-                    chat = get_or_create_chat(db.session, chat_id)
-
-                    if repo_obj and repo_obj in chat.repos:
-                        chat_repo = db.session.query(ChatRepo) \
-                            .filter(ChatRepo.chat_id == chat.id).filter(ChatRepo.repo_id == repo_obj.id) \
-                            .first()
-                        chat_repo.process_pre_releases = not chat_repo.process_pre_releases
-                        db.session.commit()
-
-                        if chat_repo.process_pre_releases:
-                            reply_message = f"You are subscribed to repo <b>{repo_obj.full_name}</b> pre-releases."
-                        else:
-                            reply_message = f"You are unsubscribed from repo <b>{repo_obj.full_name}</b> pre-releases."
-                        repo_url = repo_obj.link
-                        await update.message.get_bot().send_message(chat_id, reply_message,
-                                                                    parse_mode=ParseMode.HTML,
-                                                                    link_preview_options=LinkPreviewOptions(
-                                                                        url=repo_url,
-                                                                        prefer_small_media=True)
-                                                                    )
-                    else:
+                if update.message.reply_to_message:
+                    repo_url = update.message.reply_to_message.link_preview_options.url
+                    repo_obj = session.query(Repo) \
+                        .filter(Repo.link == repo_url) \
+                        .first()
+                else:
+                    if not context.args or len(context.args) != 1 or not direct_pattern.search(context.args[0]):
                         await update.message.reply_text(
-                            "Error: Repo not founded."
-                        )
+                            "Specify a GitHub repo in the following format: /prerelease owner/repo")
+                        return
 
-    async def delete_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+                    repo_name = context.args[0]
+                    repo_obj = session.query(Repo) \
+                        .filter(Repo.full_name == repo_name) \
+                        .first()
+
+                chat = get_or_create_chat(session, chat_id)
+
+                if repo_obj and repo_obj in chat.repos:
+                    chat_repo = session.query(ChatRepo) \
+                        .filter(ChatRepo.chat_id == chat.id).filter(ChatRepo.repo_id == repo_obj.id) \
+                        .first()
+                    chat_repo.process_pre_releases = not chat_repo.process_pre_releases
+                    session.commit()
+
+                    if chat_repo.process_pre_releases:
+                        reply_message = f"You are subscribed to repo <b>{repo_obj.full_name}</b> pre-releases."
+                    else:
+                        reply_message = f"You are unsubscribed from repo <b>{repo_obj.full_name}</b> pre-releases."
+                    repo_url = repo_obj.link
+                    await update.message.get_bot().send_message(chat_id, reply_message,
+                                                                parse_mode=ParseMode.HTML,
+                                                                link_preview_options=LinkPreviewOptions(
+                                                                    url=repo_url,
+                                                                    prefer_small_media=True),
+                                                                )
+                else:
+                    await update.message.reply_text(
+                        "Error: Repo not founded.",
+                    )
+
+    @with_session
+    async def delete_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE, session: Session) -> None:
         """Process the command /delete."""
         if self._get_chat_id(update):
             if chat_id := self._get_chat_id(update):
-                with self.app.app_context():
-                    if update.message.reply_to_message:
-                        repo_url = update.message.reply_to_message.link_preview_options.url
-                        repo_obj = db.session.query(Repo) \
-                            .filter(Repo.link == repo_url) \
-                            .first()
-                    else:
-                        if not context.args or len(context.args) != 1 or not direct_pattern.search(context.args[0]):
-                            await update.message.reply_text(
-                                "Specify a GitHub repo in the following format: /delete owner/repo")
-                            return
-
-                        repo_name = context.args[0]
-                        repo_obj = db.session.query(Repo) \
-                            .filter(Repo.full_name == repo_name) \
-                            .first()
-
-                    chat = get_or_create_chat(db.session, chat_id)
-
-                    if repo_obj and repo_obj in chat.repos:
-                        chat.repos.remove(repo_obj)
-                        db.session.commit()
-
-                        reply_message = f"Deleted repo: <b>{repo_obj.full_name}</b>"
-                        repo_url = repo_obj.link
-                        await update.message.get_bot().send_message(chat_id, reply_message,
-                                                                    parse_mode=ParseMode.HTML,
-                                                                    link_preview_options=LinkPreviewOptions(
-                                                                        url=repo_url,
-                                                                        prefer_small_media=True)
-                                                                    )
-                    else:
+                if update.message.reply_to_message:
+                    repo_url = update.message.reply_to_message.link_preview_options.url
+                    repo_obj = session.query(Repo) \
+                        .filter(Repo.link == repo_url) \
+                        .first()
+                else:
+                    if not context.args or len(context.args) != 1 or not direct_pattern.search(context.args[0]):
                         await update.message.reply_text(
-                            "Error: Repo not founded."
-                        )
+                            "Specify a GitHub repo in the following format: /delete owner/repo")
+                        return
 
-    def get_repo_keyboard(self, chat_id, curr_page):
+                    repo_name = context.args[0]
+                    repo_obj = session.query(Repo) \
+                        .filter(Repo.full_name == repo_name) \
+                        .first()
+
+                chat = get_or_create_chat(session, chat_id)
+
+                if repo_obj and repo_obj in chat.repos:
+                    chat.repos.remove(repo_obj)
+                    session.commit()
+
+                    reply_message = f"Deleted repo: <b>{repo_obj.full_name}</b>"
+                    repo_url = repo_obj.link
+                    await update.message.get_bot().send_message(chat_id, reply_message,
+                                                                parse_mode=ParseMode.HTML,
+                                                                link_preview_options=LinkPreviewOptions(
+                                                                    url=repo_url,
+                                                                    prefer_small_media=True),
+                                                                )
+                else:
+                    await update.message.reply_text(
+                        "Error: Repo not founded.",
+                    )
+
+    def get_repo_keyboard(self, chat_id, curr_page, session: Session):
         btn_per_line = 4
         lines = (InlineKeyboardMarkupLimit.TOTAL_BUTTON_NUMBER - 3) // btn_per_line
 
         keyboard = []
-        with self.app.app_context():
-            chat = get_or_create_chat(db.session, chat_id)
-            if len(chat.repos) == 0:
-                return None
+        chat = get_or_create_chat(session, chat_id)
+        if len(chat.repos) == 0:
+            return None
 
-            for repo in chat.repos[curr_page * lines:(curr_page + 1) * lines]:
-                repo_name = repo.full_name.split('/')[1]
-                latest_release = get_latest_chat_release(db.session, chat, repo)
-                if latest_release:
-                    repo_current_tag = latest_release.tag_name
-                    if latest_release.link:
-                        repo_current_tag_url = latest_release.link
-                    else:
-                        repo_current_tag_url = f"{repo.link}/releases/tag/{repo_current_tag}"
+        for repo in chat.repos[curr_page * lines:(curr_page + 1) * lines]:
+            repo_name = repo.full_name.split('/')[1]
+            latest_release = get_latest_chat_release(session, chat, repo)
+            if latest_release:
+                repo_current_tag = latest_release.tag_name
+                if latest_release.link:
+                    repo_current_tag_url = latest_release.link
                 else:
-                    repo_current_tag = "N/A"
-                    repo_current_tag_url = f"{repo.link}/releases"
-                chat_repo = db.session.query(ChatRepo) \
-                    .filter(ChatRepo.chat_id == chat.id).filter(ChatRepo.repo_id == repo.id) \
-                    .first()
-                process_pre_releases = "✔️" if chat_repo.process_pre_releases else "❌"
-                keyboard.append([InlineKeyboardButton(repo_name, url=repo.link),
-                                 InlineKeyboardButton(repo_current_tag, url=repo_current_tag_url),
-                                 InlineKeyboardButton(f"Pre: {process_pre_releases}️️",
-                                                      callback_data=f"pre-{curr_page}-{repo.id}"),
-                                 InlineKeyboardButton("🗑️",
-                                                      callback_data=f"delete-{curr_page}-{repo.id}")])
-
-            if not keyboard:
-                return keyboard
-
-            assert btn_per_line == len(keyboard[0])
-
-            if len(chat.repos) > (curr_page + 1) * lines:
-                if curr_page > 0:
-                    keyboard.append([InlineKeyboardButton("⬅️ Prev", callback_data=f"prev-{curr_page - 1}"),
-                                     InlineKeyboardButton("Cancel", callback_data="cancel"),
-                                     InlineKeyboardButton("Next ➡️", callback_data=f"next-{curr_page + 1}")])
-                else:
-                    keyboard.append([InlineKeyboardButton("Cancel", callback_data="cancel"),
-                                     InlineKeyboardButton("Next ➡️", callback_data=f"next-{curr_page + 1}")])
+                    repo_current_tag_url = f"{repo.link}/releases/tag/{repo_current_tag}"
             else:
-                if curr_page > 0:
-                    keyboard.append([InlineKeyboardButton("⬅️ Prev", callback_data=f"prev-{curr_page - 1}"),
-                                     InlineKeyboardButton("Cancel", callback_data="cancel")])
-                else:
-                    keyboard.append([InlineKeyboardButton("Cancel", callback_data="cancel")])
-            keyboard_markup = InlineKeyboardMarkup(keyboard)
-            return keyboard_markup
+                repo_current_tag = "N/A"
+                repo_current_tag_url = f"{repo.link}/releases"
+            chat_repo = session.query(ChatRepo) \
+                .filter(ChatRepo.chat_id == chat.id).filter(ChatRepo.repo_id == repo.id) \
+                .first()
+            process_pre_releases = "✔️" if chat_repo.process_pre_releases else "❌"
+            keyboard.append([InlineKeyboardButton(repo_name, url=repo.link),
+                             InlineKeyboardButton(repo_current_tag, url=repo_current_tag_url),
+                             InlineKeyboardButton(f"Pre: {process_pre_releases}️️",
+                                                  callback_data=f"pre-{curr_page}-{repo.id}"),
+                             InlineKeyboardButton("🗑️",
+                                                  callback_data=f"delete-{curr_page}-{repo.id}")])
 
-    async def edit_list_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not keyboard:
+            return keyboard
+
+        assert btn_per_line == len(keyboard[0])
+
+        if len(chat.repos) > (curr_page + 1) * lines:
+            if curr_page > 0:
+                keyboard.append([InlineKeyboardButton("⬅️ Prev", callback_data=f"prev-{curr_page - 1}"),
+                                 InlineKeyboardButton("Cancel", callback_data="cancel"),
+                                 InlineKeyboardButton("Next ➡️", callback_data=f"next-{curr_page + 1}")])
+            else:
+                keyboard.append([InlineKeyboardButton("Cancel", callback_data="cancel"),
+                                 InlineKeyboardButton("Next ➡️", callback_data=f"next-{curr_page + 1}")])
+        else:
+            if curr_page > 0:
+                keyboard.append([InlineKeyboardButton("⬅️ Prev", callback_data=f"prev-{curr_page - 1}"),
+                                 InlineKeyboardButton("Cancel", callback_data="cancel")])
+            else:
+                keyboard.append([InlineKeyboardButton("Cancel", callback_data="cancel")])
+        keyboard_markup = InlineKeyboardMarkup(keyboard)
+        return keyboard_markup
+
+    @with_session
+    async def edit_list_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE, session: Session) -> None:
         """Send a message when the command /editlist is issued."""
         if chat_id := self._get_chat_id(update):
-            keyboard = self.get_repo_keyboard(chat_id, 0)
+            keyboard = self.get_repo_keyboard(chat_id, 0, session)
             if keyboard:
                 await update.message.reply_text("Here's all your added repos with their releases:",
                                                 reply_markup=keyboard)
             else:
                 await update.message.reply_text("You are haven't repos yet.")
 
-    async def add_repo(self, chat_id, repo, bot, silent=False) -> None:
-        with self.app.app_context():
-            chat = get_or_create_chat(db.session, chat_id)
+    async def add_repo(self, chat_id, repo, bot, session, silent=False) -> None:
 
-            if self.app.config['MAX_REPOS_PER_CHAT']:
-                if len(chat.repos) >= self.app.config['MAX_REPOS_PER_CHAT']:  # TODO: Use SQL COUNT instead Python len
-                    if not silent:
-                        await bot.send_message(
-                            chat_id=chat.id,
-                            text=f"Maximum number of repos per user reached.",
-                        )
-                    return
+        chat = get_or_create_chat(session, chat_id)
 
-            repo_obj = db.session.get(Repo, repo.id)
-            if not repo_obj:
-                repo_obj = Repo(
-                    id=repo.id,
-                    full_name=repo.full_name,
-                    description=repo.description,
-                    link=repo.html_url,
-                    archived=repo.archived,
-                )
-
-                store_latest_release(db.session, repo, repo_obj)
-
-                db.session.add(repo_obj)
-                db.session.commit()
-
-            if chat in repo_obj.chats:
+        if self.settings.MAX_REPOS_PER_CHAT:
+            if len(chat.repos) >= self.settings.MAX_REPOS_PER_CHAT:  # TODO: Use SQL COUNT instead Python len
                 if not silent:
                     await bot.send_message(
                         chat_id=chat.id,
-                        text=f"GitHub repo <b>{repo.full_name}</b> has already been added.",
-                        parse_mode=ParseMode.HTML,
-                        link_preview_options=LinkPreviewOptions(
-                            url=repo.html_url,
-                            prefer_small_media=True)
+                        text=f"Maximum number of repos per user reached.",
                     )
+                return
+
+        repo_obj = session.get(Repo, repo.id)
+        if not repo_obj:
+            repo_obj = Repo(
+                id=repo.id,
+                full_name=repo.full_name,
+                description=repo.description,
+                link=repo.html_url,
+                archived=repo.archived,
+            )
+
+            store_latest_release(session, repo, repo_obj)
+
+            session.add(repo_obj)
+            session.commit()
+
+        if chat in repo_obj.chats:
+            if not silent:
+                await bot.send_message(
+                    chat_id=chat.id,
+                    text=f"GitHub repo <b>{repo.full_name}</b> has already been added.",
+                    parse_mode=ParseMode.HTML,
+                    link_preview_options=LinkPreviewOptions(
+                        url=repo.html_url,
+                        prefer_small_media=True),
+                )
+        else:
+            repo_obj.chats.append(chat)
+            session.commit()
+
+            if repo_obj.archived:
+                await bot.send_message(
+                    chat_id=chat.id,
+                    text=f"Added GitHub repo: <b>{repo.full_name}</b>, "
+                         f"but it is archived",
+                    parse_mode=ParseMode.HTML,
+                    link_preview_options=LinkPreviewOptions(
+                        url=repo.html_url,
+                        prefer_small_media=True),
+                )
+            elif repo_obj.get_latest_release():
+                await bot.send_message(
+                    chat_id=chat.id,
+                    text=f"Added GitHub repo: <b>{repo.full_name}</b>",
+                    parse_mode=ParseMode.HTML,
+                    link_preview_options=LinkPreviewOptions(
+                        url=repo.html_url,
+                        prefer_small_media=True),
+                )
             else:
-                repo_obj.chats.append(chat)
-                db.session.commit()
+                await bot.send_message(
+                    chat_id=chat.id,
+                    text=f"Added GitHub repo: <b>{repo.full_name}</b>, "
+                         f"but it has no releases",
+                    parse_mode=ParseMode.HTML,
+                    link_preview_options=LinkPreviewOptions(
+                        url=repo.html_url,
+                        prefer_small_media=True),
+                )
 
-                if repo_obj.archived:
-                    await bot.send_message(
-                        chat_id=chat.id,
-                        text=f"Added GitHub repo: <b>{repo.full_name}</b>, "
-                             f"but it is archived",
-                        parse_mode=ParseMode.HTML,
-                        link_preview_options=LinkPreviewOptions(
-                            url=repo.html_url,
-                            prefer_small_media=True)
-                    )
-                elif repo_obj.get_latest_release():
-                    await bot.send_message(
-                        chat_id=chat.id,
-                        text=f"Added GitHub repo: <b>{repo.full_name}</b>",
-                        parse_mode=ParseMode.HTML,
-                        link_preview_options=LinkPreviewOptions(
-                            url=repo.html_url,
-                            prefer_small_media=True)
-                    )
-                else:
-                    await bot.send_message(
-                        chat_id=chat.id,
-                        text=f"Added GitHub repo: <b>{repo.full_name}</b>, "
-                             f"but it has no releases",
-                        parse_mode=ParseMode.HTML,
-                        link_preview_options=LinkPreviewOptions(
-                            url=repo.html_url,
-                            prefer_small_media=True)
-                    )
-
-    async def add_starred_repos(self, chat_id, github_user, bot) -> None:
+    async def add_starred_repos(self, chat_id, github_user, bot, session: Session) -> None:
         repos = github_user.get_starred()
         for repo in repos:
-            await self.add_repo(chat_id, repo, bot, True)
+            await self.add_repo(chat_id, repo, bot, session, True)
 
-    async def button(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    @with_session
+    async def button(self, update: Update, context: ContextTypes.DEFAULT_TYPE, session: Session) -> None:
         if chat_id := self._get_chat_id(update):
             query = update.callback_query
 
@@ -424,33 +444,31 @@ class TelegramBot(object):
             if query.data == 'cancel':
                 await query.delete_message()
             elif query.data == 'unsubscribe_user':
-                with self.app.app_context():
-                    chat = get_or_create_chat(db.session, chat_id)
-                    github_username = chat.github_username
-                    chat.github_username = None
-                    db.session.commit()
+                chat = get_or_create_chat(session, chat_id)
+                github_username = chat.github_username
+                chat.github_username = None
+                session.commit()
 
-                    await query.edit_message_text(text=f"Unsubscribed from user {github_username}.")
+                await query.edit_message_text(text=f"Unsubscribed from user {github_username}.")
             elif query.data.startswith("subscribe_user-"):
                 github_user_name = query.data.split("-", 1)[1]
                 try:
-                    github_user = github_obj.get_user(github_user_name)
+                    github_user = self.github.get_user(github_user_name)
                 except github.GithubException as e:
                     await update.message.reply_text("Error: User not founded.")
                     return
 
-                with self.app.app_context():
-                    chat = get_or_create_chat(db.session, chat_id)
-                    chat.github_username = github_user.login
-                    db.session.commit()
+                chat = get_or_create_chat(session, chat_id)
+                chat.github_username = github_user.login
+                session.commit()
 
-                    await query.edit_message_text(text=f"Subscribed to user {github_user.login} starred repos.")
+                await query.edit_message_text(text=f"Subscribed to user {github_user.login} starred repos.")
 
-                await self.add_starred_repos(chat_id, github_user, update.callback_query.get_bot())
+                await self.add_starred_repos(chat_id, github_user, update.callback_query.get_bot(), session)
             elif query.data.startswith("add_repos-"):
                 github_user_name = query.data.split("-", 1)[1]
                 try:
-                    github_user = github_obj.get_user(github_user_name)
+                    github_user = self.github.get_user(github_user_name)
                 except github.GithubException as e:
                     await update.message.reply_text("Error: User not founded.")
                     return
@@ -459,99 +477,95 @@ class TelegramBot(object):
 
                 await query.delete_message()
             elif query.data == "release_note_format":
-                with self.app.app_context():
-                    chat = get_or_create_chat(db.session, chat_id)
-                    keyboard = [[InlineKeyboardButton(f"{"✅" if chat.release_note_format == "quote" else ""} Quote",
-                                                      callback_data="release_note_format-quote"),
-                                 InlineKeyboardButton(f"{"✅" if chat.release_note_format == "pre" else ""} Pre",
-                                                      callback_data="release_note_format-pre"),
-                                 InlineKeyboardButton(f"{"✅" if not chat.release_note_format else ""} Markdown",
-                                                      callback_data="release_note_format-markdown"),
-                                 InlineKeyboardButton(f"{"✅" if chat.release_note_format == "html" else ""} HTML",
-                                                      callback_data="release_note_format-html"), ],
-                        [InlineKeyboardButton("Cancel", callback_data="cancel")]]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
+                chat = get_or_create_chat(session, chat_id)
+                keyboard = [[InlineKeyboardButton(f"{"✅" if chat.release_note_format == "quote" else ""} Quote",
+                                                  callback_data="release_note_format-quote"),
+                             InlineKeyboardButton(f"{"✅" if chat.release_note_format == "pre" else ""} Pre",
+                                                  callback_data="release_note_format-pre"),
+                             InlineKeyboardButton(f"{"✅" if not chat.release_note_format else ""} Markdown",
+                                                  callback_data="release_note_format-markdown"),
+                             InlineKeyboardButton(f"{"✅" if chat.release_note_format == "html" else ""} HTML",
+                                                  callback_data="release_note_format-html"), ],
+                            [InlineKeyboardButton("Cancel", callback_data="cancel")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
 
                 await query.edit_message_reply_markup(reply_markup)
             elif query.data.startswith("release_note_format-"):
-                with self.app.app_context():
-                    chat = get_or_create_chat(db.session, chat_id)
-                    if query.data == "release_note_format-quote":
-                        chat.release_note_format = "quote"
-                    elif query.data == "release_note_format-pre":
-                        chat.release_note_format = "pre"
-                    elif query.data == "release_note_format-markdown":
-                        chat.release_note_format = None
-                    elif query.data == "release_note_format-html":
-                        chat.release_note_format = "html"
-                    else:
-                        await update.message.reply_text("Error: Unknown format.")
-                        return
-                    db.session.commit()
+                chat = get_or_create_chat(session, chat_id)
+                if query.data == "release_note_format-quote":
+                    chat.release_note_format = "quote"
+                elif query.data == "release_note_format-pre":
+                    chat.release_note_format = "pre"
+                elif query.data == "release_note_format-markdown":
+                    chat.release_note_format = None
+                elif query.data == "release_note_format-html":
+                    chat.release_note_format = "html"
+                else:
+                    await update.message.reply_text("Error: Unknown format.")
+                    return
+                session.commit()
 
                 await query.edit_message_text(text=f"Release note format changed.")
             elif query.data.startswith("next-"):
                 next_page = int(query.data.split("-", 1)[1])
-                keyboard = self.get_repo_keyboard(chat_id, next_page)
+                keyboard = self.get_repo_keyboard(chat_id, next_page, session)
                 if keyboard:
                     await query.edit_message_reply_markup(keyboard)
             elif query.data.startswith("prev-"):
                 prev_page = int(query.data.split("-", 1)[1])
-                keyboard = self.get_repo_keyboard(chat_id, prev_page)
+                keyboard = self.get_repo_keyboard(chat_id, prev_page, session)
                 if keyboard:
                     await query.edit_message_reply_markup(keyboard)
             elif query.data.startswith("pre-"):
                 _, curr_page, repo_id = query.data.split("-", 2)
-                with self.app.app_context():
-                    chat = get_or_create_chat(db.session, chat_id)
-                    repo_obj = db.session.get(Repo, repo_id)
-                    if not repo_obj:
-                        await update.message.reply_text("Error: Repo not founded.")
-                        return
+                chat = get_or_create_chat(session, chat_id)
+                repo_obj = session.get(Repo, repo_id)
+                if not repo_obj:
+                    await update.message.reply_text("Error: Repo not founded.")
+                    return
 
-                    chat_repo = db.session.query(ChatRepo) \
-                        .filter(ChatRepo.chat_id == chat.id).filter(ChatRepo.repo_id == repo_obj.id) \
-                        .first()
-                    chat_repo.process_pre_releases = not chat_repo.process_pre_releases
-                    db.session.commit()
+                chat_repo = session.query(ChatRepo) \
+                    .filter(ChatRepo.chat_id == chat.id).filter(ChatRepo.repo_id == repo_obj.id) \
+                    .first()
+                chat_repo.process_pre_releases = not chat_repo.process_pre_releases
+                session.commit()
 
-                    if chat_repo.process_pre_releases:
-                        reply_message = f"You are subscribed to repo <b>{repo_obj.full_name}</b> pre-releases."
-                    else:
-                        reply_message = f"You are unsubscribed from repo <b>{repo_obj.full_name}</b> pre-releases."
-                    repo_url = repo_obj.link
+                if chat_repo.process_pre_releases:
+                    reply_message = f"You are subscribed to repo <b>{repo_obj.full_name}</b> pre-releases."
+                else:
+                    reply_message = f"You are unsubscribed from repo <b>{repo_obj.full_name}</b> pre-releases."
+                repo_url = repo_obj.link
 
-                keyboard = self.get_repo_keyboard(chat_id, int(curr_page))
+                keyboard = self.get_repo_keyboard(chat_id, int(curr_page), session)
                 await query.edit_message_reply_markup(keyboard)
 
                 await update.callback_query.get_bot().send_message(chat_id, reply_message,
                                                                    parse_mode=ParseMode.HTML,
                                                                    link_preview_options=LinkPreviewOptions(
                                                                        url=repo_url,
-                                                                       prefer_small_media=True)
+                                                                       prefer_small_media=True),
                                                                    )
             elif query.data.startswith("delete-"):
                 _, curr_page, repo_id = query.data.split("-", 2)
                 curr_page = int(curr_page)
-                with self.app.app_context():
-                    chat = get_or_create_chat(db.session, chat_id)
-                    repo_obj = db.session.get(Repo, repo_id)
-                    if repo_obj:
-                        chat.repos.remove(repo_obj)
-                        db.session.commit()
+                chat = get_or_create_chat(session, chat_id)
+                repo_obj = session.get(Repo, repo_id)
+                if repo_obj:
+                    chat.repos.remove(repo_obj)
+                    session.commit()
 
-                        reply_message = f"Deleted repo: <b>{repo_obj.full_name}</b>"
-                        repo_url = repo_obj.link
-                    else:
-                        reply_message = "Error: Repo not founded."
-                        repo_url = ""
+                    reply_message = f"Deleted repo: <b>{repo_obj.full_name}</b>"
+                    repo_url = repo_obj.link
+                else:
+                    reply_message = "Error: Repo not founded."
+                    repo_url = ""
 
-                keyboard = self.get_repo_keyboard(chat_id, curr_page)
+                keyboard = self.get_repo_keyboard(chat_id, curr_page, session)
                 if keyboard:
                     await query.edit_message_reply_markup(keyboard)
                 else:
                     if curr_page > 0:
-                        keyboard = self.get_repo_keyboard(chat_id, curr_page - 1)
+                        keyboard = self.get_repo_keyboard(chat_id, curr_page - 1, session)
                         await query.edit_message_reply_markup(keyboard)
                     else:
                         await query.edit_message_text(text="You no longer have any repos.")
@@ -560,23 +574,23 @@ class TelegramBot(object):
                                                                    parse_mode=ParseMode.HTML,
                                                                    link_preview_options=LinkPreviewOptions(
                                                                        url=repo_url,
-                                                                       prefer_small_media=True)
+                                                                       prefer_small_media=True),
                                                                    )
 
-    async def starred_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    @with_session
+    async def starred_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE, session: Session) -> None:
         """Send a message when the command /starred is issued."""
         if chat_id := self._get_chat_id(update):
-            with self.app.app_context():
-                chat = get_or_create_chat(db.session, chat_id)
-                if chat.github_username:
-                    keyboard = [[InlineKeyboardButton("Unsubscribe from user", callback_data="unsubscribe_user")],
-                                [InlineKeyboardButton("Cancel", callback_data="cancel")]]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
+            chat = get_or_create_chat(session, chat_id)
+            if chat.github_username:
+                keyboard = [[InlineKeyboardButton("Unsubscribe from user", callback_data="unsubscribe_user")],
+                            [InlineKeyboardButton("Cancel", callback_data="cancel")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
 
-                    await update.message.reply_text(f"You are already subscribe to the user {chat.github_username}.\n"
-                                                    "Unsubscribe now?",
-                                                    reply_markup=reply_markup)
-                    return
+                await update.message.reply_text(f"You are already subscribe to the user {chat.github_username}.\n"
+                                                "Unsubscribe now?",
+                                                reply_markup=reply_markup)
+                return
 
             if not context.args or len(context.args) > 1:
                 await update.message.reply_text("Specify a GitHub username in the following format: /starred username")
@@ -584,7 +598,7 @@ class TelegramBot(object):
 
             github_user_name = context.args[0]
             try:
-                github_user = github_obj.get_user(github_user_name)
+                github_user = self.github.get_user(github_user_name)
             except github.GithubException as e:
                 await update.message.reply_text("Sorry, I can't find that user.")
                 return
@@ -610,25 +624,25 @@ class TelegramBot(object):
             await update.message.reply_text(f"Settings",
                                             reply_markup=reply_markup)
 
-    async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    @with_session
+    async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE, session: Session) -> None:
         """Send a message when the command /stats is issued."""
         if self._get_chat_id(update):
-            with (self.app.app_context()):
-                release_count = db.session.query(Release).count()
-                repo_count = db.session.query(Repo).count()
-                user_count = db.session.query(Chat).count()
-                subscription_count = db.session.query(ChatRepo).count()
+            release_count = session.query(Release).count()
+            repo_count = session.query(Repo).count()
+            user_count = session.query(Chat).count()
+            subscription_count = session.query(ChatRepo).count()
 
-                text = (f"I have to update {release_count} releases for {repo_count} repos via {subscription_count} "
-                        f"subscriptions added by {user_count} users.")
+            text = (f"I have to update {release_count} releases for {repo_count} repos via {subscription_count} "
+                    f"subscriptions added by {user_count} users.")
 
-            await update.message.reply_text(text)
+        await update.message.reply_text(text)
 
-    async def test_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    @with_session
+    async def test_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE, session: Session) -> None:
         """Send a message when the command /test is issued."""
         if chat_id := self._get_chat_id(update):
-            with (self.app.app_context()):
-                chat = get_or_create_chat(db.session, chat_id)
+            chat = get_or_create_chat(session, chat_id)
 
             if not context.args or len(context.args) > 1:
                 await update.message.reply_text("Specify a GitHub release URL")
@@ -640,7 +654,7 @@ class TelegramBot(object):
                 await update.message.reply_text("Wrong GitHub release URL")
                 return
 
-            repo = github_obj.get_repo(f"{path_parts[0]}/{path_parts[1]}")
+            repo = self.github.get_repo(f"{path_parts[0]}/{path_parts[1]}")
             release = repo.get_release(path_parts[4])
             release.updated = False
 
@@ -651,7 +665,7 @@ class TelegramBot(object):
                                                         entities=entities,
                                                         link_preview_options=LinkPreviewOptions(
                                                             url=repo.html_url,
-                                                            prefer_small_media=True)
+                                                            prefer_small_media=True),
                                                         )
 
     def _pypi2github(self, project_name):
@@ -699,7 +713,8 @@ class TelegramBot(object):
 
         return resp.status, repo_name
 
-    async def message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    @with_session
+    async def message(self, update: Update, context: ContextTypes.DEFAULT_TYPE, session: Session) -> None:
         """Add GitHub repo"""
         if chat_id := self._get_chat_id(update):
             if self._is_group(update):
@@ -740,15 +755,16 @@ class TelegramBot(object):
                 return
 
             try:
-                repo = github_obj.get_repo(repo_name)
+                repo = self.github.get_repo(repo_name)
             except github.GithubException as e:
                 await update.message.reply_text("Sorry, I can't find that repo.")
                 print(f"GithubException for {repo_name} in message: {e}")
                 return
 
-            await self.add_repo(chat_id, repo, update.get_bot(), False)
+            await self.add_repo(chat_id, repo, update.get_bot(), session, False)
 
-    async def download_file(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    @with_session
+    async def download_file(self, update: Update, context: ContextTypes.DEFAULT_TYPE, session: Session) -> None:
         """Add GitHub repo from uploaded requirements.txt"""
         if chat_id := self._get_chat_id(update):
             if update.message.document.file_size > MAX_UPLOADED_FILE_SIZE:
@@ -762,12 +778,12 @@ class TelegramBot(object):
                     status, repo_name = self._pypi2github(req.name)
                     if status == 200 and repo_name:
                         try:
-                            repo = github_obj.get_repo(repo_name)
+                            repo = self.github.get_repo(repo_name)
                         except github.GithubException as e:
                             print("Github Exception in download_file", e)
                             continue
 
-                        await self.add_repo(chat_id, repo, update.get_bot(), True)
+                        await self.add_repo(chat_id, repo, update.get_bot(), session, True)
             elif update.message.document.file_name == "package.json":
                 file = await context.bot.get_file(update.message.document)
                 data = await file.download_as_bytearray()
@@ -778,12 +794,12 @@ class TelegramBot(object):
                         status, repo_name = self._npm2github(package)
                         if status == 200 and repo_name:
                             try:
-                                repo = github_obj.get_repo(repo_name)
+                                repo = self.github.get_repo(repo_name)
                             except github.GithubException as e:
                                 print("Github Exception in download_file", e)
                                 continue
 
-                            await self.add_repo(chat_id, repo, update.get_bot(), True)
+                            await self.add_repo(chat_id, repo, update.get_bot(), session, True)
             else:
                 await update.message.reply_text("I don't know this file format.")
                 return
@@ -823,7 +839,7 @@ class TelegramBot(object):
         async with self.application.bot:
             await self.application.start()
             await self.set_commands(self.application)
-            await self.application.bot.set_webhook(url=f"{self.app.config['SITE_URL']}/telegram",
+            await self.application.bot.set_webhook(url=f"{self.settings.SITE_URL}/telegram",
                                                    allowed_updates=Update.ALL_TYPES)
 
     async def run_polling(self):
@@ -835,11 +851,11 @@ class TelegramBot(object):
                 await asyncio.sleep(1)
 
     def start(self):
-        if self.app.config['SITE_URL']:
+        if self.settings.SITE_URL:
             asyncio.run(self.run_webhook())
         else:
             # Start the bot instance in thread
-            bot = TelegramBot(self.app)
+            bot = TelegramBot(self.settings, self.github)
             thread = threading.Thread(target=asyncio.run, args=(bot.run_polling(),))
             thread.daemon = True
             thread.start()

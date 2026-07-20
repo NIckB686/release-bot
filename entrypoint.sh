@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 
 while true; do
-    flask db upgrade
+    alembic upgrade head
     if [[ "$?" == "0" ]]; then
         break
     fi
