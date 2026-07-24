@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -8,17 +8,19 @@ from telegram.constants import ParseMode
 from app.repo_engine import format_release_message
 
 FORMATTING_PARAMS = {
-    "quote": {"format": "quote", "mode": ParseMode.HTML},
-    "pre": {"format": "pre", "mode": ParseMode.HTML},
-    "html": {"format": "html", "mode": DEFAULT_NONE},
-    "markdown": {"format": None, "mode": ParseMode.MARKDOWN_V2},
+    "quote": {"format": "quote", "mode": ParseMode.HTML, "ext": "quote"},
+    "pre": {"format": "pre", "mode": ParseMode.HTML, "ext": "pre"},
+    "html": {"format": "html", "mode": DEFAULT_NONE, "ext": "html"},
+    "markdown": {"format": None, "mode": ParseMode.MARKDOWN_V2, "ext": "md"},
 }
+
 
 @pytest.fixture
 def empty_repo():
     repo = Mock()
     repo.full_name = ""
     return repo
+
 
 @pytest.fixture
 def empty_release():
@@ -31,151 +33,59 @@ def empty_release():
     release.updated = False
     return release
 
-def test_format_quote_none_input(empty_repo, empty_release):
-    release_note_format = FORMATTING_PARAMS["quote"]["format"]
 
-    empty_release.body = None
-    message, parse_mode, entities = format_release_message(release_note_format, empty_repo, empty_release)
+NONE_OR_EMPTY_EXPECTED = {
+    "quote": "<b></b>\n <a href=''></a>\n<blockquote></blockquote>",
+    "pre": "<b></b>\n <a href=''></a>\n<pre></pre>",
+    "html": "****\n\n",
+    "markdown": "————————\n",
+}
 
-    assert parse_mode == FORMATTING_PARAMS["quote"]["mode"]
-    assert message == "<b></b>\n <a href=''></a>\n<blockquote></blockquote>"
 
-def test_format_pre_none_input(empty_repo, empty_release):
-    release_note_format = FORMATTING_PARAMS["pre"]["format"]
+@pytest.mark.parametrize("key", FORMATTING_PARAMS.keys())
+@pytest.mark.parametrize("body", [None, ""])
+def test_format_none_or_empty_input(empty_repo, empty_release, key, body):
+    release_note_format = FORMATTING_PARAMS[key]["format"]
+    empty_release.body = body
 
-    empty_release.body = None
-    message, parse_mode, entities = format_release_message(release_note_format, empty_repo, empty_release)
+    message, parse_mode, _entities = format_release_message(
+        release_note_format, empty_repo, empty_release
+    )
+    assert parse_mode == FORMATTING_PARAMS[key]["mode"]
+    assert message == NONE_OR_EMPTY_EXPECTED[key]
 
-    assert parse_mode == FORMATTING_PARAMS["pre"]["mode"]
-    assert message == "<b></b>\n <a href=''></a>\n<pre></pre>"
 
-def test_format_html_none_input(empty_repo, empty_release):
-    release_note_format = FORMATTING_PARAMS["html"]["format"]
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
-    empty_release.body = None
-    message, parse_mode, entities = format_release_message(release_note_format, empty_repo, empty_release)
-
-    assert parse_mode == FORMATTING_PARAMS["html"]["mode"]
-    assert message == "****\n\n"
-
-def test_format_markdown_none_input(empty_repo, empty_release):
-    release_note_format = FORMATTING_PARAMS["markdown"]["format"]
-
-    empty_release.body = None
-    message, parse_mode, entities = format_release_message(release_note_format, empty_repo, empty_release)
-
-    assert parse_mode == FORMATTING_PARAMS["markdown"]["mode"]
-    assert message == "————————\n"
-
-def test_format_quote_empty_input(empty_repo, empty_release):
-    release_note_format = FORMATTING_PARAMS["quote"]["format"]
-
-    message, parse_mode, entities = format_release_message(release_note_format, empty_repo, empty_release)
-
-    assert parse_mode == FORMATTING_PARAMS["quote"]["mode"]
-    assert message == "<b></b>\n <a href=''></a>\n<blockquote></blockquote>"
-
-def test_format_pre_empty_input(empty_repo, empty_release):
-    release_note_format = FORMATTING_PARAMS["pre"]["format"]
-
-    message, parse_mode, entities = format_release_message(release_note_format, empty_repo, empty_release)
-
-    assert parse_mode == FORMATTING_PARAMS["pre"]["mode"]
-    assert message == "<b></b>\n <a href=''></a>\n<pre></pre>"
-
-def test_format_html_empty_input(empty_repo, empty_release):
-    release_note_format = FORMATTING_PARAMS["html"]["format"]
-
-    message, parse_mode, entities = format_release_message(release_note_format, empty_repo, empty_release)
-
-    assert parse_mode == FORMATTING_PARAMS["html"]["mode"]
-    assert message == "****\n\n"
-
-def test_format_markdown_empty_input(empty_repo, empty_release):
-    release_note_format = FORMATTING_PARAMS["markdown"]["format"]
-
-    message, parse_mode, entities = format_release_message(release_note_format, empty_repo, empty_release)
-
-    assert parse_mode == FORMATTING_PARAMS["markdown"]["mode"]
-    assert message == "————————\n"
-
-DATA_DIR = os.path.join(os.path.dirname(__file__), 'data')
 
 def get_test_cases():
-    files = [f[:-5] for f in os.listdir(DATA_DIR) if f.endswith('.orig')]
-    return files
+    return [file.stem for file in DATA_DIR.glob("*.orig")]
+
 
 @pytest.mark.parametrize("case_name", get_test_cases())
-def test_format_quote_input(empty_repo, empty_release, case_name):
-    release_note_format = FORMATTING_PARAMS["quote"]["format"]
-
-    orig_path = os.path.join(DATA_DIR, f"{case_name}.orig")
-    dst_path = os.path.join(DATA_DIR, f"{case_name}.quote")
-    with open(orig_path, 'r', encoding='utf-8', newline="") as f:
-        orig_content = f.read()
-    with open(dst_path, 'r', encoding='utf-8', newline="") as f:
-        dst_content = f.read()
+@pytest.mark.parametrize("key", FORMATTING_PARAMS.keys())
+def test_format_input(empty_repo, empty_release, key, case_name):
+    release_note_format = FORMATTING_PARAMS[key]["format"]
+    ext = FORMATTING_PARAMS[key]["ext"]
+    orig_path = DATA_DIR / f"{case_name}.orig"
+    dst_path = DATA_DIR / f"{case_name}.{ext}"
+    orig_content = orig_path.read_text()
+    dst_content = dst_path.read_text()
 
     empty_release.body = orig_content
 
-    message, parse_mode, entities = format_release_message(release_note_format, empty_repo, empty_release)
-
-    assert parse_mode == FORMATTING_PARAMS["quote"]["mode"]
+    message, parse_mode, _entities = format_release_message(
+        release_note_format, empty_repo, empty_release
+    )
+    if key == "html":
+        assert parse_mode in (
+            FORMATTING_PARAMS["html"]["mode"],
+            FORMATTING_PARAMS["markdown"]["mode"],
+        )
+    else:
+        assert parse_mode == FORMATTING_PARAMS[key]["mode"]
     assert message == dst_content
 
-@pytest.mark.parametrize("case_name", get_test_cases())
-def test_format_pre_input(empty_repo, empty_release, case_name):
-    release_note_format = FORMATTING_PARAMS["pre"]["format"]
 
-    orig_path = os.path.join(DATA_DIR, f"{case_name}.orig")
-    dst_path = os.path.join(DATA_DIR, f"{case_name}.pre")
-    with open(orig_path, 'r', encoding='utf-8', newline="") as f:
-        orig_content = f.read()
-    with open(dst_path, 'r', encoding='utf-8', newline="") as f:
-        dst_content = f.read()
-
-    empty_release.body = orig_content
-
-    message, parse_mode, entities = format_release_message(release_note_format, empty_repo, empty_release)
-
-    assert parse_mode == FORMATTING_PARAMS["pre"]["mode"]
-    assert message == dst_content
-
-@pytest.mark.parametrize("case_name", get_test_cases())
-def test_format_html_input(empty_repo, empty_release, case_name):
-    release_note_format = FORMATTING_PARAMS["html"]["format"]
-
-    orig_path = os.path.join(DATA_DIR, f"{case_name}.orig")
-    dst_path = os.path.join(DATA_DIR, f"{case_name}.html")
-    with open(orig_path, 'r', encoding='utf-8', newline="") as f:
-        orig_content = f.read()
-    with open(dst_path, 'r', encoding='utf-8', newline="") as f:
-        dst_content = f.read()
-
-    empty_release.body = orig_content
-
-    message, parse_mode, entities = format_release_message(release_note_format, empty_repo, empty_release)
-
-    assert parse_mode in (FORMATTING_PARAMS["html"]["mode"], FORMATTING_PARAMS["markdown"]["mode"])
-    assert message == dst_content
-
-@pytest.mark.parametrize("case_name", get_test_cases())
-def test_format_markdown_input(empty_repo, empty_release, case_name):
-    release_note_format = FORMATTING_PARAMS["markdown"]["format"]
-
-    orig_path = os.path.join(DATA_DIR, f"{case_name}.orig")
-    dst_path = os.path.join(DATA_DIR, f"{case_name}.md")
-    with open(orig_path, 'r', encoding='utf-8', newline="") as f:
-        orig_content = f.read()
-    with open(dst_path, 'r', encoding='utf-8', newline="") as f:
-        dst_content = f.read()
-
-    empty_release.body = orig_content
-
-    message, parse_mode, entities = format_release_message(release_note_format, empty_repo, empty_release)
-
-    assert parse_mode == FORMATTING_PARAMS["markdown"]["mode"]
-    assert message == dst_content
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     pytest.main([__file__])
