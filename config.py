@@ -12,7 +12,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    TELEGRAM_BOT_TOKEN: str | None = None
+    TELEGRAM_BOT_TOKEN: str
     GITHUB_TOKEN: str | None = None
     SITE_URL: str | None = None
     SQLALCHEMY_DATABASE_URI: str = Field(default=f"sqlite:///{basedir}/data/db.sqlite", alias="DATABASE_URI")
