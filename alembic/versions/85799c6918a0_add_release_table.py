@@ -8,9 +8,10 @@ Create Date: 2024-10-25 16:04:30.639733
 import os
 
 import github
-from alembic import op
 import sqlalchemy as sa
-from github import Github, Auth
+from github import Auth, Github
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = '85799c6918a0'
@@ -64,7 +65,7 @@ def upgrade():
                     'release_date': release.published_at,
                     'link': release.html_url,
                 })
-            except github.GithubException as e:
+            except github.GithubException:
                 # Repo has no releases yet
                 if github_repo.get_tags().totalCount > 0:
                     tag = github_repo.get_tags()[0]
