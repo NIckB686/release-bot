@@ -1,7 +1,7 @@
-__all__ = ["Base", "Repo", "Chat", "Release", "Repo"]
+__all__ = ["Base", "Chat", "ChatRepo", "Release", "Repo"]
 
+from .base import Base
 from .chat import Chat
 from .chat_repo import ChatRepo
 from .release import Release
 from .repo import Repo
-from .base import Base

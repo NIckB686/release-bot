@@ -4,11 +4,12 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.database.models import Repo
-from datetime import datetime, timezone
-from app.database.models.base import Base
+from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.database.models.base import Base
 
 
 class Chat(Base):
@@ -18,9 +19,9 @@ class Chat(Base):
     lang: Mapped[str] = mapped_column(String(2), default='en')
     github_username: Mapped[str | None] = mapped_column(String)
     release_note_format: Mapped[str | None] = mapped_column(String)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now(UTC))
 
-    repos: Mapped[list["Repo"]] = relationship(
+    repos: Mapped[list[Repo]] = relationship(
         secondary='chat_repo',
         back_populates='chats',
     )
