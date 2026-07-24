@@ -1,12 +1,12 @@
 # python -m tests.generate_fixtures
 
-import os
 import urllib
+from pathlib import Path
 
-from app import github_obj
+from app.github_obj import github_obj
 from app.repo_engine import format_release_message
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), 'data')
+DATA_DIR = Path(__file__).resolve().parent / "data"
 RELEASE_URLS = (
     "https://github.com/AdguardTeam/AdGuardHome/releases/tag/v0.107.71",
     "https://github.com/SiliconLabs/gecko_sdk/releases/tag/v4.4.5",
@@ -31,6 +31,7 @@ RELEASE_URLS = (
     "https://github.com/urllib3/urllib3/releases/tag/2.5.0",
 )
 
+
 class DummyRepo:
     def __init__(self):
         self.full_name = ""
@@ -46,36 +47,46 @@ class DummyRelease:
         self.updated = False
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     for github_release_url in RELEASE_URLS:
-        path_parts = urllib.parse.urlparse(github_release_url).path.strip('/').split('/')
-        if len(path_parts) < 5 or path_parts[2] != 'releases' or path_parts[3] != 'tag':
+        path_parts = (
+            urllib.parse.urlparse(github_release_url).path.strip("/").split("/")
+        )
+        if len(path_parts) < 5 or path_parts[2] != "releases" or path_parts[3] != "tag":
             raise "Wrong GitHub release URL"
         case_name = f"{path_parts[1]}_{path_parts[4]}"
 
         repo = github_obj.get_repo(f"{path_parts[0]}/{path_parts[1]}")
         release = repo.get_release(path_parts[4])
 
-        orig_path = os.path.join(DATA_DIR, f"{case_name}.orig")
-        md_path = os.path.join(DATA_DIR, f"{case_name}.md")
-        html_path = os.path.join(DATA_DIR, f"{case_name}.html")
-        pre_path = os.path.join(DATA_DIR, f"{case_name}.pre")
-        quote_path = os.path.join(DATA_DIR, f"{case_name}.quote")
+        orig_path = DATA_DIR / f"{case_name}.orig"
+        md_path = DATA_DIR / f"{case_name}.md"
+        html_path = DATA_DIR / f"{case_name}.html"
+        pre_path = DATA_DIR / f"{case_name}.pre"
+        quote_path = DATA_DIR / f"{case_name}.quote"
 
-        with open(orig_path, 'w', encoding='utf-8', newline="") as f:
+        with orig_path.open( "w", encoding="utf-8", newline="") as f:
             f.write(release.body)
 
         empty_repo = DummyRepo()
         empty_release = DummyRelease(release.body)
-        with open(md_path, 'w', encoding='utf-8', newline="") as f:
-            message, parse_mode, entities = format_release_message(None, empty_repo, empty_release)
+        with md_path.open( "w", encoding="utf-8", newline="") as f:
+            message, parse_mode, entities = format_release_message(
+                None, empty_repo, empty_release
+            )
             f.write(message)
-        with open(html_path, 'w', encoding='utf-8', newline="") as f:
-            message, parse_mode, entities = format_release_message("html", empty_repo, empty_release)
+        with html_path.open( "w", encoding="utf-8", newline="") as f:
+            message, parse_mode, entities = format_release_message(
+                "html", empty_repo, empty_release
+            )
             f.write(message)
-        with open(pre_path, 'w', encoding='utf-8', newline="") as f:
-            message, parse_mode, entities = format_release_message("pre", empty_repo, empty_release)
+        with pre_path.open( "w", encoding="utf-8", newline="") as f:
+            message, parse_mode, entities = format_release_message(
+                "pre", empty_repo, empty_release
+            )
             f.write(message)
-        with open(quote_path, 'w', encoding='utf-8', newline="") as f:
-            message, parse_mode, entities = format_release_message("quote", empty_repo, empty_release)
+        with quote_path.open( "w", encoding="utf-8", newline="") as f:
+            message, parse_mode, entities = format_release_message(
+                "quote", empty_repo, empty_release
+            )
             f.write(message)
