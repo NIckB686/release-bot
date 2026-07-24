@@ -8,4 +8,4 @@ while true; do
     echo Deploy command failed, retrying in 5 secs...
     sleep 5
 done
-gunicorn -b :5000 app:app
+uvicorn app.main:app --host 0.0.0.0 --port 8000
