@@ -6,7 +6,7 @@
 
 # release-bot - a Telegram bot that notifies you of new GitHub releases
 
-This is a Telegram bot that monitors the releases of given repos, sending messages upon a new release.
+This Telegram bot monitors GitHub repositories and notifies you about new releases.
 
 If you don't need a local installation you can use public bot, avalaible at https://t.me/janisreleasebot.
 
@@ -24,36 +24,36 @@ Other similar tools:
 ## Features
 
 - Easy subscription to repo by owner/name, GitHub/PyPI/npm URL or uploading requirements.txt or package.json file
-- Rich markdown formatting for release note
+- Rich Markdown formatting for release note
 - Auto subscription to starred repos
 - Ready for self-hosting, has docker image
-- Work locally, without white IP and domain name
-- Only Telegram token required
+- Works locally without a public IP address or a domain name
+- Only a Telegram bot token is required
 
 ## Commands
 
-`/start` - show welcome message  
-`/about` - information about this bot  
-`/help` - brief usage info  
-`/list` - show your subscriptions  
-`/editlist` - show and edit your subscriptions  
-`/starred username` - subscribe to user's starred repos  
-`/starred` - unsubscribe from user's starred repos  
-`/settings` - change output format  
-`/stats` - basic server statistics  
-`/test URL` - show specified release message
+- `/start` - show welcome message
+- `/about` - information about this bot
+- `/help` - brief usage info
+- `/list` - show your subscriptions
+- `/editlist` - show and edit your subscriptions
+- `/starred username` - subscribe to user's starred repos
+- `/starred` - unsubscribe from user's starred repos
+- `/settings` - change output format
+- `/stats` - basic server statistics
+- `/test URL` - show specified release message
 
 ## Stack
 
 - Python 3.12
-- Flask
+- FastAPI
 - telegramify_markdown
 - sulguk
 - python-telegram-bot
 - PyGithub
-- APScheduler via Flask-APScheduler
-- SQLAlchemy via Flask-SQLAlchemy
-- Alembic via Flask-Migrate - SQLAlchemy database migrations
+- APScheduler
+- SQLAlchemy
+- Alembic - SQLAlchemy database migrations
 
 ## Running it yourself
 
@@ -65,21 +65,21 @@ Using docker compose:
 services:
   release-bot:
     container_name: release-bot
-    image: ghcr.io/janisv/release-bot:latest
+    build: .
     restart: unless-stopped
     environment:
       - TELEGRAM_BOT_TOKEN=<telegram_token>
       #- GITHUB_TOKEN=<github_token> # optional
       #- SITE_URL=https://<your_domain_name> # optional
     ports:
-      - 5000:5000
+      - 8000:8000
     volumes:
       - /path/to/data:/app/data
 ```
 
 or docker run:
 
-`docker run -p 5000:5000 -e TELEGRAM_BOT_TOKEN="<telegram_token>" -v /path/to/data:/app/data -d --name release-bot ghcr.io/janisv/release-bot:latest`
+`docker run -p 8000:8000 -e TELEGRAM_BOT_TOKEN="<telegram_token>" -v /path/to/data:/app/data -d --name release-bot .`
 
 ### From source
 
@@ -107,10 +107,12 @@ Look at Development section
 
 Setup env vars and run:
 
-```shell
-pip3 install -r requirements.txt
-flask db upgrade
-python3 -m flask run -h 0.0.0.0
+### Running with uv (recommended)
+
+```sh
+uv sync
+uv run alembic upgrade head
+uv run fastapi dev app/main.py --host 0.0.0.0
 ```
 
 For use webhooks locally, you may want to use [localhost.run](https://localhost.run/).
