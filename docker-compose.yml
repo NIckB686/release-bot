@@ -8,6 +8,6 @@ services:
       - GITHUB_TOKEN=<github_token>
       - SITE_URL=https://<your_domain_name> # optional
     ports:
-      - 5000:5000
+      - 8000:8000
     volumes:
       - /path/to/data:/app/data
