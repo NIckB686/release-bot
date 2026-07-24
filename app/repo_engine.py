@@ -1,5 +1,6 @@
+import contextlib
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import github
 from sulguk import transform_html
@@ -69,10 +70,7 @@ def format_header(release_note_format, repo, release):
 def htmlify_release_body(release_note_format, repo, release):
     header = format_header(release_note_format, repo, release)
     release_body = release.body
-    if release_body:
-        release_body = release_body.replace('\r\n', '\n')
-    else:
-        release_body = ""
+    release_body = release_body.replace('\r\n', '\n') if release_body else ""
     release_body = f"{header}{release_body}"
 
     rendered_release_body = github_obj.render_markdown(release_body)
@@ -108,10 +106,7 @@ def htmlify_release_body(release_note_format, repo, release):
 
 def codeify_release_message(release_note_format, repo, release):
     release_body = release.body
-    if release_body:
-        release_body = release_body.replace('\r\n', '\n')
-    else:
-        release_body = ""
+    release_body = release_body.replace('\r\n', '\n') if release_body else ""
     release_body = github_extra_html_tags_pattern.sub(
         "",
         release_body,
@@ -134,10 +129,7 @@ def codeify_release_message(release_note_format, repo, release):
 
 def markdownify_release_message(release_note_format, repo, release):
     release_body = release.body
-    if release_body:
-        release_body = release_body.replace('\r\n', '\n')
-    else:
-        release_body = ""
+    release_body = release_body.replace('\r\n', '\n') if release_body else ""
     release_body = github_extra_html_tags_pattern.sub(
         "",
         release_body,
@@ -203,21 +195,19 @@ def store_latest_release(session, repo, repo_obj):
 
     if settings.PROCESS_PRE_RELEASES:
         releases = repo.get_releases()
-        try:
+        with contextlib.suppress(IndexError):
             prerelease = releases[0]
-        except IndexError:
-            pass
 
         if prerelease and (not prerelease.prerelease or prerelease.draft):
             prerelease = None
-        if prerelease and datetime.now(timezone.utc) - timedelta(minutes=15) < prerelease.published_at:
+        if prerelease and datetime.now(UTC) - timedelta(minutes=15) < prerelease.published_at:
             prerelease = None
 
     try:
         release = repo.get_latest_release()
         if release.draft:
             release = None
-    except github.GithubException as e:
+    except github.GithubException:
         # Repo has no releases yet
         if repo.get_tags().totalCount > 0:
             tag = repo.get_tags()[0]
@@ -229,7 +219,7 @@ def store_latest_release(session, repo, repo_obj):
                 .filter(Repo.id == repo_obj.id).filter(Release.release_id == release.id) \
                 .first()
             if release_obj:
-                stored_release_date = release_obj.release_date.replace(tzinfo=timezone.utc)
+                stored_release_date = release_obj.release_date.replace(tzinfo=UTC)
                 if release.last_modified_datetime > stored_release_date:
                     release_obj.release_date = release.last_modified_datetime
                     release_obj.pre_release = release.prerelease
@@ -268,7 +258,7 @@ def store_latest_release(session, repo, repo_obj):
                 prerelease = None
 
         return release, prerelease
-    elif tag:
+    if tag:
         release_obj = session.query(Release).join(Repo) \
             .filter(Repo.id == repo_obj.id).filter(Release.tag_name == tag.name) \
             .first()
