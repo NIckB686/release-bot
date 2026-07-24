@@ -1,44 +1,44 @@
 from http import HTTPStatus
 
-from flask import Response, request
+from fastapi import APIRouter, Request, Response
 from sqlalchemy import func, select
 
-from app import app, telegram_bot
 from app._version import __version__
 from app.database import SessionLocal
 from app.database.models import Repo
-from app.database.models.release import Release
 from app.database.models.chat import Chat
+from app.database.models.release import Release
+from config import settings
+
+router = APIRouter()
 
 
-@app.route('/')
-async def index():
+@router.get("/")
+async def index(request: Request):
+    telegram_bot = request.app.state.telegram_bot
     bot_me = await telegram_bot.get_me()
     return (
         f'<a href="https://t.me/{bot_me.username}">{bot_me.first_name}</a> - a telegram bot for GitHub releases v{__version__}.'
-        '<br><br>'
-        'Source code available at <a href="https://github.com/JanisV/release-bot">JanisV/release-bot</a>')
+        "<br><br>"
+        'Source code available at <a href="https://github.com/JanisV/release-bot">JanisV/release-bot</a>'
+    )
 
 
-@app.route('/stats')
+@router.get("/stats")
 async def stats():
     with SessionLocal() as session:
-        users = session.scalar(select(func.count()).select_from(Chat))
-        repos = session.scalar(select(func.count()).select_from(Repo))
-        releases = session.scalar(select(func.count()).select_from(Release))
-
-    statistics = {
-        "users": users,
-        "repos": repos,
-        "releases": releases,
-    }
-    return statistics
+        return {
+            "users": session.scalar(select(func.count()).select_from(Chat)),
+            "repos": session.scalar(select(func.count()).select_from(Repo)),
+            "releases": session.scalar(select(func.count()).select_from(Release)),
+        }
 
 
-@app.post("/telegram")
-async def telegram() -> Response:
-    if app.config['SITE_URL']:
-        await telegram_bot.webhook(request.json)
-        return Response(status=HTTPStatus.OK)
-    else:
-        return Response(status=HTTPStatus.NOT_IMPLEMENTED)
+@router.post("/telegram")
+async def telegram(request: Request) -> Response:
+    if not settings.SITE_URL:
+        return Response(status_code=HTTPStatus.NOT_IMPLEMENTED)
+    telegram_bot = request.app.state.telegram_bot
+    update = await request.json()
+    await telegram_bot.webhook(update)
+    return Response(status_code=HTTPStatus.OK)
