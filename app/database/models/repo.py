@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from app.database.models import Chat, Release
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -21,9 +22,9 @@ class Repo(Base):
     link: Mapped[str | None] = mapped_column(String)
     archived: Mapped[bool | None] = mapped_column(Boolean)
     blocked: Mapped[bool | None] = mapped_column(Boolean)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now(timezone.utc))
-    chats: Mapped[list["Chat"]] = relationship("Chat", secondary='chat_repo', back_populates='repos')
-    releases: Mapped[list["Release"]] = relationship('Release', back_populates='repos', cascade="all, delete-orphan")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now(UTC))
+    chats: Mapped[list[Chat]] = relationship("Chat", secondary='chat_repo', back_populates='repos')
+    releases: Mapped[list[Release]] = relationship('Release', back_populates='repos', cascade="all, delete-orphan")
 
     def is_orphan(self):
         # TODO: Use SQL COUNT instead Python len
