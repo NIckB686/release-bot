@@ -874,7 +874,7 @@ wheels = [
 
 [[package]]
 name = "release-bot"
-version = "0.8.4"
+version = "0.0.1"
 source = { virtual = "." }
 dependencies = [
     { name = "aiogram" },
