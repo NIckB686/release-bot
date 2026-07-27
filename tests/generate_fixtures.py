@@ -50,10 +50,11 @@ class DummyRelease:
 if __name__ == "__main__":
     for github_release_url in RELEASE_URLS:
         path_parts = (
+            # pyrefly: ignore [implicit-import]
             urllib.parse.urlparse(github_release_url).path.strip("/").split("/")
         )
         if len(path_parts) < 5 or path_parts[2] != "releases" or path_parts[3] != "tag":
-            raise "Wrong GitHub release URL"
+            raise RuntimeError("Wrong GitHub release URL")
         case_name = f"{path_parts[1]}_{path_parts[4]}"
 
         repo = github_obj.get_repo(f"{path_parts[0]}/{path_parts[1]}")
@@ -72,21 +73,25 @@ if __name__ == "__main__":
         empty_release = DummyRelease(release.body)
         with md_path.open( "w", encoding="utf-8", newline="") as f:
             message, parse_mode, entities = format_release_message(
+                # pyrefly: ignore [bad-argument-type]
                 None, empty_repo, empty_release
             )
             f.write(message)
         with html_path.open( "w", encoding="utf-8", newline="") as f:
             message, parse_mode, entities = format_release_message(
+                # pyrefly: ignore [bad-argument-type]
                 "html", empty_repo, empty_release
             )
             f.write(message)
         with pre_path.open( "w", encoding="utf-8", newline="") as f:
             message, parse_mode, entities = format_release_message(
+                # pyrefly: ignore [bad-argument-type]
                 "pre", empty_repo, empty_release
             )
             f.write(message)
         with quote_path.open( "w", encoding="utf-8", newline="") as f:
             message, parse_mode, entities = format_release_message(
+                # pyrefly: ignore [bad-argument-type]
                 "quote", empty_repo, empty_release
             )
             f.write(message)

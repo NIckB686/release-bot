@@ -38,7 +38,7 @@ async def stats():
 async def telegram(request: Request) -> Response:
     if not settings.SITE_URL:
         return Response(status_code=HTTPStatus.NOT_IMPLEMENTED)
-    telegram_bot = request.app.state.telegram_bot
+    dp = request.app.state.dp
     update = await request.json()
-    await telegram_bot.webhook(update)
+    await dp.feed_update(update)
     return Response(status_code=HTTPStatus.OK)

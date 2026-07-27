@@ -7,8 +7,10 @@ dependencies = [
     "alembic~=1.18.4",
     "apscheduler~=3.11.3",
     "fastapi[standard-no-fastapi-cloud-cli]~=0.139.2",
+    "pydantic==2.13.4",
     "pydantic-settings~=2.14.2",
     "pygithub~=2.9.0",
+    "pyrefly==1.1.1",
     "python-telegram-bot~=22.7",
     "requirements-parser~=0.11.0",
     "sqlalchemy[asyncio]~=2.0.48",
@@ -51,6 +53,8 @@ select = [
     "G",
 ]
 ignore = [
+    "F405",
+    "F403",
     "E501",
     "RUF001"
 ]

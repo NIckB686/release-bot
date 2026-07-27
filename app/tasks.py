@@ -4,28 +4,25 @@ import logging
 
 import github
 import telegram
+from aiogram import Bot
+from aiogram.enums import ParseMode
+from aiogram.types import LinkPreviewOptions
 from github.GitRelease import GitRelease
 from github.Tag import Tag
 from sqlalchemy import select
-from telegram import LinkPreviewOptions
-from telegram.constants import ParseMode
 
 from app.database import SessionLocal
 from app.database.models import Chat, Repo
 from app.database.models.chat_repo import ChatRepo
 from app.github_obj import github_obj
 from app.repo_engine import format_release_message, store_latest_release
-from app.telegram_bot import TelegramBot
+from app.telegram_bot import add_starred_repos
 
 logger = logging.getLogger(__name__)
 
 
-def poll_github(telegram_bot: TelegramBot):
+async def poll_github(bot: Bot):
     with SessionLocal() as session:
-        if not asyncio.run(telegram_bot.test_token()):
-            logger.critical("Telegram bot token is invalid or server not available")
-            return
-
         for repo_obj in session.scalars(select(Repo)):
             # TODO: Filter blocked repos from SQL query
             if repo_obj.blocked:
@@ -39,7 +36,7 @@ def poll_github(telegram_bot: TelegramBot):
                 for chat in repo_obj.chats:
                     with contextlib.suppress(telegram.error.Forbidden):
                         asyncio.run(
-                            telegram_bot.send_message(
+                            bot.send_message(
                                 chat_id=chat.id,
                                 text=message,
                                 disable_web_page_preview=True,
@@ -55,12 +52,10 @@ def poll_github(telegram_bot: TelegramBot):
                     message = f"GitHub repo {repo_obj.full_name} has been blocked"
                     for chat in repo_obj.chats:
                         with contextlib.suppress(telegram.error.Forbidden):
-                            asyncio.run(
-                                telegram_bot.send_message(
-                                    chat_id=chat.id,
-                                    text=message,
-                                    disable_web_page_preview=True,
-                                )
+                            await bot.send_message(
+                                chat_id=chat.id,
+                                text=message,
+                                disable_web_page_preview=True,
                             )
 
                     logger.info(message)
@@ -79,7 +74,7 @@ def poll_github(telegram_bot: TelegramBot):
                 for chat in repo_obj.chats:
                     with contextlib.suppress(telegram.error.Forbidden):
                         asyncio.run(
-                            telegram_bot.send_message(
+                            bot.send_message(
                                 chat_id=chat.id,
                                 text=message,
                                 parse_mode=ParseMode.HTML,
@@ -108,7 +103,7 @@ def poll_github(telegram_bot: TelegramBot):
 
                     try:
                         asyncio.run(
-                            telegram_bot.send_message(
+                            bot.send_message(
                                 chat_id=chat.id,
                                 text=message,
                                 parse_mode=parse_mode,
@@ -135,7 +130,7 @@ def poll_github(telegram_bot: TelegramBot):
                 for chat in repo_obj.chats:
                     try:
                         asyncio.run(
-                            telegram_bot.send_message(
+                            bot.send_message(
                                 chat_id=chat.id,
                                 text=message,
                                 parse_mode=ParseMode.HTML,
@@ -155,10 +150,9 @@ def poll_github(telegram_bot: TelegramBot):
                 for chat in repo_obj.chats:
                     chat_repo = session.scalar(
                         select(ChatRepo)
-                        .where(ChatRepo.chat_id == chat.id)
-                        .where(ChatRepo.repo_id == repo_obj.id),
+                        .where(ChatRepo.chat_id == chat.id, ChatRepo.repo_id == repo_obj.id),
                     )
-                    if not chat_repo.process_pre_releases:
+                    if isinstance(chat_repo, ChatRepo) and not chat_repo.process_pre_releases:
                         break
 
                     message, parse_mode, entities = format_release_message(
@@ -167,7 +161,7 @@ def poll_github(telegram_bot: TelegramBot):
 
                     try:
                         asyncio.run(
-                            telegram_bot.send_message(
+                            bot.send_message(
                                 chat_id=chat.id,
                                 text=message,
                                 parse_mode=parse_mode,
@@ -183,11 +177,12 @@ def poll_github(telegram_bot: TelegramBot):
                         session.commit()
 
 
-def poll_github_user(telegram_bot: TelegramBot):
+async def poll_github_user(bot: Bot):
     with SessionLocal() as session:
         stmt = select(Chat).where(Chat.github_username.is_not(None))
         for chat in session.scalars(stmt):
             try:
+                # pyrefly: ignore [bad-argument-type]
                 github_user = github_obj.get_user(chat.github_username)
             except github.GithubException:
                 logger.error("Can't found user '%s'", chat.github_username)
@@ -195,8 +190,8 @@ def poll_github_user(telegram_bot: TelegramBot):
 
             try:
                 asyncio.run(
-                    telegram_bot.add_starred_repos(
-                        chat.id, github_user, telegram_bot, session
+                    add_starred_repos(
+                        chat.id, github_user, bot, session
                     )
                 )
             except telegram.error.Forbidden:
@@ -218,15 +213,14 @@ def poll_github_user(telegram_bot: TelegramBot):
                 starred = repo in github_user.get_starred()
                 chat_repo = session.scalar(
                     select(ChatRepo)
-                    .where(ChatRepo.chat_id == chat.id)
-                    .where(ChatRepo.repo_id == repo_obj.id),
+                    .where(ChatRepo.chat_id == chat.id, ChatRepo.repo_id == repo_obj.id),
                 )
-                if chat_repo.starred != starred:
+                if isinstance(chat_repo, ChatRepo) and chat_repo.starred != starred:
                     chat_repo.starred = starred
                     session.commit()
 
 
-def clear_db():
+async def clear_db():
     with SessionLocal() as session:
         for repo_obj in session.scalars(select(Repo)):
             #  TODO: Use sqlalchemy_utils.auto_delete_orphans
