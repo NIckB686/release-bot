@@ -17,12 +17,12 @@ class Repo(Base):
     __tablename__ = "repo"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    full_name: Mapped[str | None] = mapped_column(String)
+    full_name: Mapped[str] = mapped_column(String)
     description: Mapped[str | None] = mapped_column(String)
-    link: Mapped[str | None] = mapped_column(String)
+    link: Mapped[str] = mapped_column(String)
     archived: Mapped[bool | None] = mapped_column(Boolean)
     blocked: Mapped[bool | None] = mapped_column(Boolean)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now(UTC))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     chats: Mapped[list[Chat]] = relationship("Chat", secondary='chat_repo', back_populates='repos')
     releases: Mapped[list[Release]] = relationship('Release', back_populates='repos', cascade="all, delete-orphan")
 
