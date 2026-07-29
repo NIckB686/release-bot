@@ -3,17 +3,16 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-import github
 from aiogram.enums import ParseMode
 from aiogram.types import MessageEntity
+from github import GithubException
 from github.GitRelease import GitRelease
+from github.Repository import Repository
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sulguk import transform_html
-from telegram.constants import MessageLimit
 from telegramify_markdown import markdownify
 
-from app.database.models import Repo
 from app.database.models.release import Release
 from app.github_emoji import github_emoji_map
 from app.github_obj import github_obj
@@ -35,17 +34,15 @@ github_a_html_tag_pattern = re.compile('<a href="(.*?)".*?>(.*?)</a>', flags=re.
 github_emoji_pattern = re.compile(r":[a-z0-9_-]+:")
 
 
-def format_header(release_note_format, repo, release):
+def format_header(release_note_format, repo: Repository, release: GitRelease):
     current_tag = release.tag_name
-    if (
-        release.title == current_tag
-        or release.title == f"v{current_tag}"
-        or f"v{release.title}" == current_tag
-    ):
-        # Skip release title when it is equal to tag
-        release_title = ""
-    else:
-        release_title = release.title
+    release_title = (
+        ""
+        if release.name == current_tag
+        or release.name == f"v{current_tag}"
+        or f"v{release.name}" == current_tag
+        else release.name
+    )
 
     if release_note_format in ("quote", "pre"):
         release_header = (
@@ -53,7 +50,7 @@ def format_header(release_note_format, repo, release):
             f"{f'<code>{release_title}</code>' if release_title else ''}"
             f" <a href='{release.html_url}'>{current_tag}</a>"
             f"{' <i>pre-release</i>' if release.prerelease else ''}"
-            f"{' <i>updated</i>' if release.updated else ''}\n"
+            f"{' <i>updated</i>' if release.updated else ''}\n"  # pyrefly: ignore [missing-attribute]
         )
     elif release_note_format == "html":
         release_header = (
@@ -61,7 +58,7 @@ def format_header(release_note_format, repo, release):
             f"{f'`{release_title}`' if release_title else ''}"
             f" [{current_tag}]({release.html_url})"
             f"{' _pre-release_' if release.prerelease else ''}"
-            f"{' _updated_' if release.updated else ''}\n\n"
+            f"{' _updated_' if release.updated else ''}\n\n"  # pyrefly: ignore [missing-attribute]
         )
     else:
         release_header = (
@@ -69,13 +66,13 @@ def format_header(release_note_format, repo, release):
             f"{f'`{release_title}`' if release_title else ''}"
             f" [{current_tag}]({release.html_url})"
             f"{' _pre-release_' if release.prerelease else ''}"
-            f"{' _updated_' if release.updated else ''}\n\n"
+            f"{' _updated_' if release.updated else ''}\n\n"  # pyrefly: ignore [missing-attribute]
         )
 
     return release_header
 
 
-def htmlify_release_body(release_note_format, repo, release: GitRelease):
+def htmlify_release_body(release_note_format, repo: Repository, release: GitRelease):
     header = format_header(release_note_format, repo, release)
     release_body = release.body
     release_body = release_body.replace("\r\n", "\n") if release_body else ""
@@ -94,8 +91,8 @@ def htmlify_release_body(release_note_format, repo, release: GitRelease):
         )
 
     message_len = len(result.text)
-    if message_len > MessageLimit.MAX_TEXT_LENGTH:
-        message_len = MessageLimit.MAX_TEXT_LENGTH - len(SKIPPED_POSTFIX)
+    if message_len > MAX_TEXT_LENGTH:
+        message_len = MAX_TEXT_LENGTH - len(SKIPPED_POSTFIX)
         result.text = f"{result.text[:message_len]}{SKIPPED_POSTFIX}"
 
     entities = []
@@ -120,7 +117,7 @@ def htmlify_release_body(release_note_format, repo, release: GitRelease):
     return result.text, None, entities
 
 
-def codeify_release_message(release_note_format, repo, release: GitRelease):
+def codeify_release_message(release_note_format, repo: Repository, release: GitRelease):
     release_body = release.body
     release_body = release_body.replace("\r\n", "\n") if release_body else ""
     release_body = github_extra_html_tags_pattern.sub(
@@ -131,10 +128,8 @@ def codeify_release_message(release_note_format, repo, release: GitRelease):
         "🖼️\\1",
         release_body,
     )
-    if len(release_body) > MessageLimit.MAX_TEXT_LENGTH - 256:
-        release_body = (
-            f"{release_body[: MessageLimit.MAX_TEXT_LENGTH - 256]}{SKIPPED_POSTFIX}"
-        )
+    if len(release_body) > MAX_TEXT_LENGTH - 256:
+        release_body = f"{release_body[: MAX_TEXT_LENGTH - 256]}{SKIPPED_POSTFIX}"
 
     header = format_header(release_note_format, repo, release)
     if release_note_format == "quote":
@@ -145,7 +140,9 @@ def codeify_release_message(release_note_format, repo, release: GitRelease):
     return message
 
 
-def markdownify_release_message(release_note_format, repo, release: GitRelease):
+def markdownify_release_message(
+    release_note_format, repo: Repository, release: GitRelease
+):
     release_body = release.body
     release_body = release_body.replace("\r\n", "\n") if release_body else ""
     release_body = github_extra_html_tags_pattern.sub(
@@ -156,10 +153,8 @@ def markdownify_release_message(release_note_format, repo, release: GitRelease):
         "🖼️\\1",
         release_body,
     )
-    if len(release_body) > MessageLimit.MAX_TEXT_LENGTH - 256:
-        release_body = (
-            f"{release_body[: MessageLimit.MAX_TEXT_LENGTH - 256]}{SKIPPED_POSTFIX}"
-        )
+    if len(release_body) > MAX_TEXT_LENGTH - 256:
+        release_body = f"{release_body[: MAX_TEXT_LENGTH - 256]}{SKIPPED_POSTFIX}"
 
     release_body = github_b_html_tag_pattern.sub(
         "**\\1**",
@@ -190,7 +185,7 @@ def markdownify_release_message(release_note_format, repo, release: GitRelease):
     header = format_header(release_note_format, repo, release)
     release_body = f"{header}{release_body}"
     message = markdownify(release_body)
-    while len(message) >= MessageLimit.MAX_TEXT_LENGTH:
+    while len(message) >= MAX_TEXT_LENGTH:
         release_body = f"{release_body[:-100]}{SKIPPED_POSTFIX}"
         message = markdownify(release_body)
 
@@ -198,7 +193,7 @@ def markdownify_release_message(release_note_format, repo, release: GitRelease):
 
 
 def format_release_message(
-    release_note_format, repo, release: GitRelease
+    release_note_format, repo: Repository, release: GitRelease
 ) -> tuple[
     str,
     Literal[ParseMode.HTML, ParseMode.MARKDOWN_V2] | None,
@@ -220,7 +215,7 @@ def format_release_message(
     return message, parse_mode, entities
 
 
-def store_latest_release(session: Session, repo, repo_obj):
+def store_latest_release(session: Session, repo: Repository, repo_obj):
     release = None
     prerelease = None
     tag = None
@@ -242,14 +237,14 @@ def store_latest_release(session: Session, repo, repo_obj):
         release = repo.get_latest_release()
         if release.draft:
             release = None
-    except github.GithubException:
+    except GithubException:
         # Repo has no releases yet
         if repo.get_tags().totalCount > 0:
             tag = repo.get_tags()[0]
 
     if release or prerelease:
         if release:
-            release.updated = False
+            release.updated = False  # pyrefly: ignore [missing-attribute]
             release_obj = session.scalar(
                 select(Release).where(
                     Release.repo_id == repo_obj.id, Release.release_id == release.id
@@ -257,12 +252,15 @@ def store_latest_release(session: Session, repo, repo_obj):
             )
             if release_obj and release_obj.release_date:
                 stored_release_date = release_obj.release_date.replace(tzinfo=UTC)
-                if release.last_modified_datetime > stored_release_date:
+                if (
+                    release.last_modified_datetime
+                    and release.last_modified_datetime > stored_release_date
+                ):
                     release_obj.release_date = release.last_modified_datetime
                     release_obj.pre_release = release.prerelease
                     session.commit()
 
-                    release.updated = True
+                    release.updated = True  # pyrefly: ignore [missing-attribute]
                 else:
                     release = None
             else:
@@ -277,13 +275,11 @@ def store_latest_release(session: Session, repo, repo_obj):
                 session.commit()
 
         if prerelease:
-            prerelease.updated = False
-            release_obj = (
-                session.query(Release)
-                .join(Repo)
-                .filter(Repo.id == repo_obj.id)
-                .filter(Release.release_id == prerelease.id)
-                .first()
+            prerelease.updated = False  # pyrefly: ignore [missing-attribute]
+            release_obj = session.scalar(
+                select(Release).where(
+                    Release.repo_id == repo_obj.id, Release.release_id == prerelease.id
+                )
             )
             if not release_obj:
                 release_obj = Release(
@@ -300,12 +296,10 @@ def store_latest_release(session: Session, repo, repo_obj):
 
         return release, prerelease
     if tag:
-        release_obj = (
-            session.query(Release)
-            .join(Repo)
-            .filter(Repo.id == repo_obj.id)
-            .filter(Release.tag_name == tag.name)
-            .first()
+        release_obj = session.scalar(
+            select(Release).where(
+                Release.repo_id == repo_obj.id, Release.tag_name == tag.name
+            )
         )
         if not release_obj:
             release_obj = Release(
