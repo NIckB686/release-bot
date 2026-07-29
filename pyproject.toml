@@ -10,7 +10,6 @@ dependencies = [
     "pydantic==2.13.4",
     "pydantic-settings~=2.14.2",
     "pygithub~=2.9.0",
-    "pyrefly==1.1.1",
     "requirements-parser~=0.11.0",
     "sqlalchemy[asyncio]~=2.0.48",
     "sulguk~=0.11.0",
@@ -22,6 +21,7 @@ dependencies = [
 dev = [
     "pytest~=9.0.3",
     "ruff~=0.15.22",
+    "pyrefly==1.1.1",
 ]
 
 [tool.ruff]
