@@ -1,10 +1,10 @@
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import Chat, ChatRepo, Release, Repo
 
 
-def get_chat_repo(chat: Chat, repo: Repo, session: Session) -> ChatRepo:
+def get_chat_repo(chat: Chat, repo: Repo, session: AsyncSession) -> ChatRepo:
     res = session.scalar(
         select(ChatRepo).where(
             ChatRepo.chat_id == chat.id,
@@ -18,7 +18,7 @@ def get_chat_repo(chat: Chat, repo: Repo, session: Session) -> ChatRepo:
     return res
 
 
-def get_latest_chat_release(session, chat, repo) -> Release | None:
+def get_latest_chat_release(session: AsyncSession, chat, repo) -> Release | None:
     if repo.releases:
         chat_repo = get_chat_repo(chat, repo, session)
 

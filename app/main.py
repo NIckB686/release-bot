@@ -7,7 +7,7 @@ from typing import Any
 from aiogram import BaseMiddleware, Bot, Dispatcher
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.database import SessionLocal, engine
 from app.github_obj import github_obj
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class MainMiddleware(BaseMiddleware):
-    def __init__(self, session_factory: sessionmaker[Session]):
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]):
         self.session_factory = session_factory
 
     async def __call__(
@@ -35,11 +35,11 @@ class MainMiddleware(BaseMiddleware):
     ) -> Any:
         chat_id: int = data["event_chat"].id
         if not settings.CHAT_ID or (settings.CHAT_ID and chat_id in settings.CHAT_ID):
-            with self.session_factory() as session:
+            async with self.session_factory() as session:
                 data["session"] = session
                 data["chat_id"] = chat_id
                 await handler(event, data)
-                session.commit()
+                await session.commit()
 
 
 class BotRunner:
@@ -120,7 +120,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         await bot.session.close()
         if scheduler.running:
             scheduler.shutdown()
-        engine.dispose()
+        await engine.dispose()
 
 
 def create_app() -> FastAPI:

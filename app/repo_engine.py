@@ -9,10 +9,11 @@ from github import GithubException
 from github.GitRelease import GitRelease
 from github.Repository import Repository
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from sulguk import transform_html
 from telegramify_markdown import markdownify
 
+from app.database.models import Repo
 from app.database.models.release import Release
 from app.github_emoji import github_emoji_map
 from app.github_obj import github_obj
@@ -215,7 +216,7 @@ def format_release_message(
     return message, parse_mode, entities
 
 
-def store_latest_release(session: Session, repo: Repository, repo_obj):
+async def store_latest_release(session: AsyncSession, repo: Repository, repo_obj: Repo):
     release = None
     prerelease = None
     tag = None
@@ -245,7 +246,7 @@ def store_latest_release(session: Session, repo: Repository, repo_obj):
     if release or prerelease:
         if release:
             release.updated = False  # pyrefly: ignore [missing-attribute]
-            release_obj = session.scalar(
+            release_obj = await session.scalar(
                 select(Release).where(
                     Release.repo_id == repo_obj.id, Release.release_id == release.id
                 )
@@ -258,7 +259,7 @@ def store_latest_release(session: Session, repo: Repository, repo_obj):
                 ):
                     release_obj.release_date = release.last_modified_datetime
                     release_obj.pre_release = release.prerelease
-                    session.commit()
+                    await session.commit()
 
                     release.updated = True  # pyrefly: ignore [missing-attribute]
                 else:
@@ -272,11 +273,11 @@ def store_latest_release(session: Session, repo: Repository, repo_obj):
                     pre_release=release.prerelease,
                 )
                 repo_obj.releases.append(release_obj)
-                session.commit()
+                await session.commit()
 
         if prerelease:
             prerelease.updated = False  # pyrefly: ignore [missing-attribute]
-            release_obj = session.scalar(
+            release_obj = await session.scalar(
                 select(Release).where(
                     Release.repo_id == repo_obj.id, Release.release_id == prerelease.id
                 )
@@ -290,7 +291,7 @@ def store_latest_release(session: Session, repo: Repository, repo_obj):
                     pre_release=prerelease.prerelease,
                 )
                 repo_obj.releases.append(release_obj)
-                session.commit()
+                await session.commit()
             else:
                 prerelease = None
 
@@ -307,7 +308,7 @@ def store_latest_release(session: Session, repo: Repository, repo_obj):
                 release_date=tag.last_modified_datetime,
             )
             repo_obj.releases.append(release_obj)
-            session.commit()
+            await session.commit()
             return tag, None
 
     return None, None
