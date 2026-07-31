@@ -11,7 +11,7 @@ dependencies = [
     "pydantic==2.13.4",
     "pydantic-settings==2.14.2",
     "pygithub==2.9.0",
-    "requirements-parser==0.11.0",
+    "requirements-parser==0.13.1",
     "sqlalchemy[asyncio]==2.0.48",
     "sulguk==0.11.0",
     "telegramify-markdown==1.1.3",
