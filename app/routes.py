@@ -20,13 +20,13 @@ async def index(request: Request):
     return (
         f'<a href="https://t.me/{bot_me.username}">{bot_me.first_name}</a> - a telegram bot for GitHub releases v{__version__}.'
         "<br><br>"
-        'Source code available at <a href="https://github.com/JanisV/release-bot">JanisV/release-bot</a>'
+        'Source code available at <a href="https://github.com/NIckB686/release-bot">NIckB686/release-bot</a>'
     )
 
 
 @router.get("/stats")
 async def stats():
-    with SessionLocal() as session:
+    async with SessionLocal() as session:
         return {
             "users": session.scalar(select(func.count()).select_from(Chat)),
             "repos": session.scalar(select(func.count()).select_from(Repo)),

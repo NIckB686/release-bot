@@ -9,7 +9,7 @@ from github.GitRelease import GitRelease
 from github.Repository import Repository
 from github.Tag import Tag
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import SessionLocal
 from app.database.models import Chat, Repo
@@ -22,17 +22,17 @@ logger = logging.getLogger(__name__)
 
 
 async def _notify_user(
-    message: str, chat: Chat, bot, session: Session, **kwargs
+    message: str, chat: Chat, bot, session: AsyncSession, **kwargs
 ) -> None:
     try:
         await bot.send_message(chat=chat.id, text=message, **kwargs)
     except TelegramForbiddenError:
         logger.info("Bot was blocked by the user")
-        session.delete(chat)
-        session.commit()
+        await session.delete(chat)
+        await session.commit()
 
 
-async def fetch_repo(repo_obj: Repo, session: Session, bot: Bot) -> Repository | None:
+async def fetch_repo(repo_obj: Repo, session: AsyncSession, bot: Bot) -> Repository | None:
     try:
         logger.info("Poll GitHub repo %s", repo_obj.full_name)
         return github_obj.get_repo(repo_obj.id)
@@ -44,8 +44,8 @@ async def fetch_repo(repo_obj: Repo, session: Session, bot: Bot) -> Repository |
             await _notify_user(
                 message, chat, bot, session, disable_web_page_preview=True
             )
-        session.delete(repo_obj)
-        session.commit()
+        await session.delete(repo_obj)
+        await session.commit()
 
     except GithubException as e:
         if e.status in (403, 451):
@@ -56,7 +56,7 @@ async def fetch_repo(repo_obj: Repo, session: Session, bot: Bot) -> Repository |
                     message, chat, bot, session, disable_web_page_preview=True
                 )
             repo_obj.blocked = True
-            session.commit()
+            await session.commit()
 
         else:
             logger.error(
@@ -68,8 +68,8 @@ async def fetch_repo(repo_obj: Repo, session: Session, bot: Bot) -> Repository |
 
 
 async def poll_github(bot: Bot):
-    with SessionLocal() as session:
-        for repo_obj in session.scalars(select(Repo)):
+    async with SessionLocal() as session:
+        for repo_obj in await session.scalars(select(Repo)):
             # TODO: Filter blocked repos from SQL query
             if repo_obj.blocked or not (
                 repo := await fetch_repo(repo_obj, session, bot)
@@ -82,13 +82,13 @@ async def poll_github(bot: Bot):
                 for chat in repo_obj.chats:
                     await _notify_user(message, chat, bot, session, url=repo_obj.link)
                 repo_obj.archived = repo.archived
-                session.commit()
+                await session.commit()
 
             elif not repo.archived and repo_obj.archived:
                 repo_obj.archived = repo.archived
-                session.commit()
+                await session.commit()
 
-            release_or_tag, prerelease = store_latest_release(session, repo, repo_obj)
+            release_or_tag, prerelease = await store_latest_release(session, repo, repo_obj)
             if isinstance(release_or_tag, GitRelease):
                 release = release_or_tag
                 logger.info("Process new release %s", release.name)
@@ -161,9 +161,9 @@ async def poll_github(bot: Bot):
 
 
 async def poll_github_user(bot: Bot):
-    with SessionLocal() as session:
+    async with SessionLocal() as session:
         stmt = select(Chat).where(Chat.github_username.is_not(None))
-        for chat in session.scalars(stmt):
+        for chat in await session.scalars(stmt):
             try:
                 github_user = github_obj.get_user(chat.github_username)  # pyrefly: ignore [bad-argument-type]
             except GithubException:
@@ -174,8 +174,8 @@ async def poll_github_user(bot: Bot):
                 await add_starred_repos(chat.id, github_user, bot, session)
             except TelegramForbiddenError:
                 logger.info("Bot was blocked by the user")
-                session.delete(chat)
-                session.commit()
+                await session.delete(chat)
+                await session.commit()
 
             for repo_obj in chat.repos:
                 try:
@@ -196,14 +196,14 @@ async def poll_github_user(bot: Bot):
                 )
                 if isinstance(chat_repo, ChatRepo) and chat_repo.starred != starred:
                     chat_repo.starred = starred
-                    session.commit()
+                    await session.commit()
 
 
 async def clear_db():
-    with SessionLocal() as session:
-        for repo_obj in session.scalars(select(Repo)):
+    async with SessionLocal() as session:
+        for repo_obj in await session.scalars(select(Repo)):
             #  TODO: Use sqlalchemy_utils.auto_delete_orphans
             if repo_obj.is_orphan():
                 logger.info("Delete orphaned GitHub repo %s", repo_obj.full_name)
-                session.delete(repo_obj)
-        session.commit()
+                await session.delete(repo_obj)
+        await session.commit()
