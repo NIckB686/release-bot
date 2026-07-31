@@ -1,14 +1,14 @@
-[![Telegram Chat](https://img.shields.io/static/v1?label=Bot&message=release-bot&color=29a1d4&logo=telegram)](https://t.me/janisreleasebot)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-x.svg)](https://www.python.org/downloads/release/python-312/)
 [![GitHub license](https://img.shields.io/github/license/JanisV/release-bot.svg)](https://github.com/JanisV/release-bot/blob/main/LICENSE)
 [![Latest build](https://github.com/JanisV/release-bot/actions/workflows/docker.yml/badge.svg)](https://github.com/JanisV/release-bot/pkgs/container/release-bot)
-[![Maintainability](https://api.codeclimate.com/v1/badges/b75abdb47ff5ec2cc5cf/maintainability)](https://codeclimate.com/github/JanisV/release-bot/maintainability)
 
-# release-bot - a Telegram bot that notifies you of new GitHub releases
+# release-bot
 
-This Telegram bot monitors GitHub repositories and notifies you about new releases.
+A Telegram bot that monitors GitHub repositories and notifies users about new releases.
 
-If you don't need a local installation you can use public bot, avalaible at https://t.me/janisreleasebot.
+release-bot is a modernized fork of JanisV/release-bot.
+
+It preserves the original functionality while replacing the underlying architecture with modern Python libraries, frameworks, and development practices.
 
 ![Screenshot](https://github.com/user-attachments/assets/7587a21e-72c3-4462-9b19-d321f85c68dc)
 
@@ -21,12 +21,29 @@ Other similar tools:
 - [Dockcheck](https://github.com/mag37/dockcheck) - CLI tool to automate docker image updates;
 - [Renovate](https://docs.renovatebot.com/) - Automated dependency updates
 
+## Why this fork?
+
+The goal of this fork is not to change the bot's functionality, but to modernize its implementation.
+
+Key architectural changes include:
+
+- Flask → FastAPI
+- python-telegram-bot → aiogram
+- Flask-SQLAlchemy → SQLAlchemy 2.x
+- Flask-Migrate → Alembic
+- Flask-APScheduler → APScheduler
+- pip → uv
+- SQLAlchemy 2.x declarative models
+- Modern SQLAlchemy query syntax
+- Updated project structure
+- Updated dependencies
+
 ## Features
 
 - Easy subscription to repo by owner/name, GitHub/PyPI/npm URL or uploading requirements.txt or package.json file
-- Rich Markdown formatting for release note
 - Auto subscription to starred repos
 - Ready for self-hosting, has docker image
+- Supports both polling and webhooks
 - Works locally without a public IP address or a domain name
 - Only a Telegram bot token is required
 
@@ -47,13 +64,24 @@ Other similar tools:
 
 - Python 3.12
 - FastAPI
+- aiogram
+- PyGithub
+- SQLAlchemy 2.x
+- Alembic
+- APScheduler
+- uv
 - telegramify_markdown
 - sulguk
-- python-telegram-bot
-- PyGithub
-- APScheduler
-- SQLAlchemy
-- Alembic - SQLAlchemy database migrations
+
+## Architecture
+
+The application consists of several loosely coupled components:
+
+- `FastAPI` provides the application lifecycle and webhook endpoint.
+- `aiogram` handles Telegram updates and command routing.
+- `APScheduler` periodically checks GitHub for new releases.
+- `SQLAlchemy` manages database access.
+- `Alembic` manages schema migrations.
 
 ## Running it yourself
 
@@ -78,7 +106,7 @@ services:
 ```
 
 or docker run:
-
+`docker build -t release-bot .`
 `docker run -p 8000:8000 -e TELEGRAM_BOT_TOKEN="<telegram_token>" -v /path/to/data:/app/data -d --name release-bot .`
 
 ### From source
@@ -105,7 +133,7 @@ Look at Development section
 
 ## Development
 
-Setup env vars and run:
+Setup env vars (you can use .env file instead) and run:
 
 ### Running with uv (recommended)
 
@@ -116,3 +144,10 @@ uv run fastapi dev app/main.py --host 0.0.0.0
 ```
 
 For use webhooks locally, you may want to use [localhost.run](https://localhost.run/).
+
+## Credits
+
+This project is based on the original
+[JanisV/release-bot](https://github.com/JanisV/release-bot).
+
+Many thanks to the original author for creating and maintaining the project.
